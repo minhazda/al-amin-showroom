@@ -19,16 +19,19 @@
   .bar .ttl { flex:1; font-size:20px; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .bar .who { font-size:14px; background:rgba(255,255,255,.16); border-radius:16px; padding:6px 10px; flex:none; max-width:40%; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .pad { padding:12px; }
-  .grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
-  .grid3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; }
-  body.wide .grid { grid-template-columns:repeat(4, 1fr); } body.wide .grid3 { grid-template-columns:repeat(6, 1fr); }
+  .grid { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:10px; }
+  .grid3 { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:8px; }
+  .tile { min-width:0; overflow-wrap:anywhere; }
+  @media (min-width:520px) { .grid3 { grid-template-columns:repeat(3, minmax(0, 1fr)); } }
+  body.wide .grid { grid-template-columns:repeat(4, minmax(0, 1fr)); } body.wide .grid3 { grid-template-columns:repeat(6, minmax(0, 1fr)); }
   .tile { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:14px 8px; min-height:104px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:6px; text-align:center; font-weight:700; }
   .tile .ic { font-size:38px; line-height:1; }
   .tile.sm { min-height:76px; padding:10px 6px; font-size:16px; }
   .tile.sm .ic { font-size:28px; }
   .tile.on { border:3px solid var(--go); background:#eaf7ef; }
   .tile.warn { border-color:var(--warn); background:#fff7ed; }
-  .tile img, .tile svg.pic { width:92px; height:72px; object-fit:cover; border-radius:10px; display:block; }
+  .tile img, .tile svg.pic { width:92px; height:72px; object-fit:contain; background:#fff; border-radius:10px; display:block; }
+  .grid3 .tile img, .grid3 .tile svg.pic { width:100%; height:96px; }
   .tile .sub { font-size:13px; font-weight:400; color:var(--mute); }
   .tile:active, .row:active, .btn:active, .key:active { filter:brightness(.93); }
   .sec { font-size:14px; font-weight:700; color:var(--mute); margin:18px 4px 8px; }
@@ -772,10 +775,15 @@ function drawnPic(it) {
   }
   return svg;
 }
+// Every item's catalogue picture is kept as a file next to the phone page; a picture loaded into the book later wins.
+var PHOTO_BASE = 'https://minhazda.github.io/al-amin-showroom/book/p/';
 function itemPic(it) {
-  var d = photoOf(it.ref);
-  if (d) { var img = el('img'); img.src = d; img.alt = itemName(it.ref); return img; }
-  return drawnPic(it);
+  var d = photoOf(it.ref), img = el('img');
+  img.alt = itemName(it.ref); img.setAttribute('loading', 'lazy'); img.className = 'pic';
+  if (d) { img.src = d; return img; }
+  img.onerror = function () { if (img.parentNode) img.parentNode.replaceChild(drawnPic(it), img); };
+  img.src = PHOTO_BASE + encodeURIComponent(it.ref) + '.jpg';
+  return img;
 }
 /**
  * Picks an item by pictures: category, then brand, then size. opts: anyOnly (bookings: the brand's "any size" for steel),
@@ -788,6 +796,8 @@ function pickItem(opts) {
     var state = { cat: opts.cat || null, brand: null, group: null, q: '' };
     function paint() {
       openModal(function (s) {
+        var cats = ['Steel', 'Cement', 'Other'].filter(function (c) { return list.some(function (it) { return it.cat === c; }); });
+        if (!state.cat && cats.length === 1) state.cat = cats[0];      // the showroom has only one kind of goods: straight to the companies
         if (!state.cat) {
           add(s, el('div', 'sec', 'কোন মাল?'));
           var g = el('div', 'grid');
@@ -802,7 +812,7 @@ function pickItem(opts) {
           add(s, el('div', 'sec', CAT_BN[state.cat][0] + ' — কোন কোম্পানি?'));
           var g2 = el('div', 'grid');
           brands.forEach(function (b) { var first = inCat.filter(function (it) { return it.brand === b; })[0]; var t = btn('tile', null, function () { state.brand = b; paint(); }); var n = inCat.filter(function (it) { return it.brand === b && !it.any; }).length; add(t, itemPic(first), el('div', null, b), el('div', 'sub', state.cat === 'Steel' ? n + 'টি সাইজ' : (n || 1) + 'টি মাল')); add(g2, t); });
-          add(s, g2, btn('btn ghost', '‹ পেছনে', function () { if (opts.cat) { closeModal(); res(null); } else { state.cat = null; paint(); } }));
+          add(s, g2, btn('btn ghost', '‹ পেছনে', function () { if (opts.cat || cats.length === 1) { closeModal(); res(null); } else { state.cat = null; paint(); } }));
           return;
         }
         var its = inCat.filter(function (it) { return it.brand === state.brand; });
@@ -828,7 +838,7 @@ function pickItem(opts) {
         add(s, el('div', 'sec', state.brand + (state.group ? ' — ' + state.group : '') + (state.q ? ' — "' + state.q + '"' : '') + ' — ' + (state.cat === 'Steel' ? 'কোন সাইজ?' : 'কোনটা?')));
         if (!shown.length) add(s, el('div', 'msg info', 'কিছু পাওয়া যায়নি।'));
         var g3 = el('div', 'grid3');
-        shown.slice(0, 80).forEach(function (it) { var t = btn('tile sm', null, function () { closeModal(); res(it); }); add(t, itemPic(it), el('div', null, state.cat === 'Steel' ? sizeOf(it) : (big ? it.size || it.product : it.product)), el('div', 'sub', itemDesc(it))); t.title = itemDesc(it); add(g3, t); });
+        shown.slice(0, 80).forEach(function (it) { var t = btn('tile sm', null, function () { closeModal(); res(it); }); add(t, itemPic(it), el('div', null, state.cat === 'Steel' ? sizeOf(it) : (big ? it.size || it.product : it.product)), el('div', 'sub', it.listPrice ? 'লিস্ট ' + tk(it.listPrice) : (state.cat === 'Steel' && it.perBundle ? 'বান্ডিলে ' + it.perBundle + ' পিস' : ''))); t.title = itemDesc(it); add(g3, t); });
         add(s, g3, btn('btn ghost', '‹ পেছনে', back));
         fetchPhotos(shown.slice(0, 80).map(function (it) { return it.ref; })).then(function (any) { if (any && modal.className === 'show') paint(); });
       });
@@ -1280,7 +1290,6 @@ function pickSource(title, first) {
 }
 function sameSource(a, b) { return !!a && !!b && a.type === b.type && (a.type === 'mill' ? a.company === b.company : a.place === b.place); }
 function addDeliveryLine() {
-  if (!F.party) { alertBox('আগে কাস্টমার বাছুন।', 'warn'); return; }
   if (!F.source) { pickSource('মাল কোথা থেকে যাচ্ছে? (সাধারণত)').then(function (v) { if (v) { F.source = v; draw(); addDeliveryLine(); } }); return; }
   pickItem({ noAny: true }).then(function (it) {
     if (!it) return;
@@ -1298,8 +1307,8 @@ function addDeliveryLine() {
           if (!q) return;
           line.qty = q;
           if (line.booking) return true;
-          var def = boardFor(F.board, it, per, false);
-          return askNumber({ title: 'প্রতি ১ ' + PER_BN[per] + '-এর দর (মোট দাম নয়)', value: def, decimals: 2, hint: def ? 'আজকের বোর্ড: ' + money(def) : 'বোর্ডে দাম নেই' }).then(function (r) { if (!r) return; line.rate = r; return true; });
+          var def = boardFor(F.board, it, per, false) || (it.listPrice && per === 'pcs' ? it.listPrice : null);   // showroom goods: the company's list price until a rate is set
+          return askNumber({ title: 'প্রতি ১ ' + PER_BN[per] + '-এর দর (মোট দাম নয়)', value: def, decimals: 2, hint: boardFor(F.board, it, per, false) ? 'আজকের বোর্ড: ' + money(def) : def ? 'কোম্পানির লিস্ট দাম: ' + money(def) : 'বোর্ডে দাম নেই' }).then(function (r) { if (!r) return; line.rate = r; return true; });
         }).then(function (ok) {
           if (!ok) return;
           if (it.base === 'g' && it.perBundle) return askNumber({ title: 'কয় বান্ডিল? (না গুনলে ০)', decimals: 0, money: false }).then(function (b) { if (b) line.bundles = b; return askNumber({ title: 'খুচরা পিস? (না থাকলে ০)', decimals: 0, money: false }); }).then(function (pc) { if (pc) line.pcs = pc; return true; });
@@ -1307,7 +1316,9 @@ function addDeliveryLine() {
         }).then(function (ok) {
           if (!ok) return;
           // a sale can take some goods from the shop, some from the warehouse and some straight from the company
-          return pickSource('এই মাল কোথা থেকে যাচ্ছে?', F.source).then(function (src) {
+          // only a branch with more than one store room asks for each line; the source of the whole chalan can be changed above
+          var placesHere = S.meta.places.filter(function (p) { return p.branch === S.branch; }).length;
+          return (placesHere > 1 ? pickSource('এই মাল কোথা থেকে যাচ্ছে?', F.source) : Promise.resolve(F.source)).then(function (src) {
             if (!src) return;
             if (!sameSource(src, F.source)) line.source = src;
             if (src.type === 'mill' && S.user.role !== 'staff') {

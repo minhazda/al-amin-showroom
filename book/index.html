@@ -312,7 +312,7 @@ function viaBridge(req) {
     try { BRIDGE.win.postMessage({ t: 'aat', id: id, req: req }, BRIDGE.origin); } catch (e) { delete BRIDGE.waiting[id]; reject(e); }
   });
 }
-if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bridgeStart); else bridgeStart();
+if (document.body) bridgeStart(); else document.addEventListener('DOMContentLoaded', bridgeStart);   // as early as possible: the first requests can use it
 /** Waits (a little) for the bridge while the page is starting. */
 function bridgeWait() {
   if (BRIDGE.ready || BRIDGE.failed || !BRIDGE.started) return Promise.resolve();

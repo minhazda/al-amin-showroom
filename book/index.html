@@ -858,6 +858,8 @@ function pickParty(opts) {
   opts = opts || {};
   return loadParties().then(function (all) {
     var list = all.filter(function (p) { return !opts.types || opts.types.indexOf(p.type) >= 0; });
+    var newType = opts.newType || (opts.types ? opts.types[0] : 'customer');
+    var canNew = opts.allowNew && can('party') && (['company', 'lender', 'staff'].indexOf(newType) < 0 || S.user.role === 'owner');   // only the owner adds mills, banks and staff
     return new Promise(function (res) {
       openModal(function (s) {
         var inp = el('input', 'txt'); inp.placeholder = 'নাম বা মোবাইল নম্বর দিয়ে খুঁজুন'; inp.setAttribute('autocomplete', 'off');
@@ -876,12 +878,26 @@ function pickParty(opts) {
             add(box, r);
           });
           if (!n) add(box, el('div', 'mut center', 'কেউ পাওয়া যায়নি'));
+          // nothing found and new ones allowed: one tap makes it, with the typed name
+          if (!n && q && canNew) add(box, btn('btn go', '➕ "' + inp.value.trim() + '" নতুন ' + (PARTY_BN[newType] || [''])[0] + ' হিসেবে যোগ করুন', function () { closeModal(); newParty(newType, inp.value.trim()).then(res); }));
+          if (!n && !canNew && newType === 'company') add(box, el('div', 'msg info', 'নতুন কোম্পানি / মিল শুধু মালিক যোগ করতে পারেন।'));
+          // companies: the brands we sell that are not yet in the list, ready to add with one tap
+          if (!q && newType === 'company' && canNew) {
+            var have = list.map(function (p) { return norm(p.name); }), brands = [];
+            S.items.forEach(function (it) { if (it.brand && brands.indexOf(it.brand) < 0 && !have.some(function (h) { return h.indexOf(norm(it.brand)) >= 0; })) brands.push(it.brand); });
+            if (brands.length) {
+              add(box, el('div', 'sec', 'আমাদের মালের কোম্পানি, এখনো যোগ হয়নি — চাপলেই যোগ হবে'));
+              var bg = el('div', 'grid');
+              brands.forEach(function (bn) { add(bg, btn('btn ghost slim', '🏭 ' + bn, function () { closeModal(); newParty('company', bn).then(res); })); });
+              add(box, bg);
+            }
+          }
         }
         inp.addEventListener('input', paint);
         add(s, el('div', 'sec', opts.title || 'কে?'), inp, el('div', null, ' '), box);
         var g = el('div', 'grid');
         add(g, btn('btn ghost', 'বাতিল', function () { closeModal(); res(null); }),
-          opts.allowNew && can('party') ? btn('btn', '➕ নতুন', function () { closeModal(); newParty(opts.newType || (opts.types ? opts.types[0] : 'customer'), inp.value).then(res); }) : null);
+          canNew ? btn('btn', '➕ নতুন', function () { closeModal(); newParty(newType, inp.value).then(res); }) : null);
         add(s, g);
         paint();
         setTimeout(function () { try { inp.focus(); } catch (e) { } }, 60);
@@ -1162,7 +1178,10 @@ function showSaved(title, res, lines) {
     if (res.overCredit) add(body, el('div', 'msg warn', 'বাকির সীমা ' + tk(res.overCredit.limit) + ' পার হয়েছে: এখন বাকি ' + tk(res.overCredit.after) + '।'));
     if (res.unknownCostQty) add(body, el('div', 'msg info', 'এই মালের কেনা দাম খাতায় নেই, তাই লাভ হিসাবে এর খরচ ধরা হয়নি। কেনা দাম দিলে ঠিক হবে।'));
     var g = el('div', 'grid');
-    add(g, btn('btn', '🖨️ মেমো / চালান', function () { push(function () { screenDoc(res.txn); }); }), btn('btn ghost', '🏠 হোম', home));
+    var openDoc = function (v) { return function () { F = F || {}; F.docTxn = res.txn; F.docView = v; push(function () { screenDoc(res.txn); }); }; };
+    if (res.chalan) add(g, btn('btn', '🧾 ক্যাশ মেমো', openDoc('memo')), btn('btn', '🚚 চালান', openDoc('chalan')));
+    else add(g, btn('btn', '🖨️ রসিদ / প্রিন্ট', openDoc('memo')));
+    add(g, btn('btn ghost', '🏠 হোম', home));
     add(body, g);
   });
 }
@@ -1284,7 +1303,7 @@ function pickSource(title, first) {
   return pickTile(title, opts, { rows: true }).then(function (v) {
     if (!v) return null;
     if (v === 'same') return first;
-    if (v.type === 'mill') return pickParty({ types: ['company'], title: 'কোন কোম্পানি / মিল?' }).then(function (c) { return c ? { type: 'mill', company: c.id, label: 'কোম্পানি থেকে: ' + c.name } : null; });
+    if (v.type === 'mill') return pickParty({ types: ['company'], title: 'কোন কোম্পানি / মিল?', allowNew: true, newType: 'company' }).then(function (c) { return c ? { type: 'mill', company: c.id, label: 'কোম্পানি থেকে: ' + c.name } : null; });
     return v;
   });
 }
@@ -1972,11 +1991,13 @@ function bizHead(b) {
 var DOC_TITLE = { DELIVERY: 'ক্যাশ মেমো ও চালান', BOOKING: 'ফরোয়ার্ড বুকিং রসিদ', COLLECT: 'মানি রসিদ', RETURN: 'মাল ফেরতের রসিদ', RECEIPT: 'মাল গ্রহণের রসিদ', PRICE: 'কেনা দামের হিসাব', EXPENSE: 'খরচের ভাউচার',
   COMPANY_PAY: 'পেমেন্ট ভাউচার', MOVE: 'মাল সরানোর চালান', MILL_BOOKING: 'মিল বুকিং', BOOKING_CANCEL: 'বুকিং বাতিলের রসিদ', REVERSAL: 'বাতিল এন্ট্রি' };
 function payText(p) { return [(METHOD_BN[p.method] || [p.method || p.account])[0], p.acct, p.bank, p.ref ? 'নং ' + p.ref : '', p.chqDate ? 'তারিখ ' + dmy(p.chqDate) : '', p.payer].filter(Boolean).join(' · '); }
-function docModel(d) {
+// A sale prints as two papers: the cash memo (prices, payments, dues) for the customer, and the chalan (goods only, where from, vehicle) for the store and driver.
+function docModel(d, view) {
+  var chalan = d.type === 'DELIVERY' && view === 'chalan', memoOnly = d.type === 'DELIVERY' && !chalan;
   var b = bizHead(d.business), kv = [];
-  b.push({ t: 'h2', s: DOC_TITLE[d.type] || (TYPE_BN[d.type] || [d.type])[0] });
-  if (d.memo) kv.push(['মেমো নং', d.memo]);
-  if (d.chalan) kv.push(['চালান নং', d.chalan]);
+  b.push({ t: 'h2', s: chalan ? 'চালান (মাল ডেলিভারি)' : memoOnly ? 'ক্যাশ মেমো' : DOC_TITLE[d.type] || (TYPE_BN[d.type] || [d.type])[0] });
+  if (chalan) { if (d.chalan) kv.push(['চালান নং', d.chalan]); if (d.memo) kv.push(['মেমো নং', d.memo]); }
+  else { if (d.memo) kv.push(['মেমো নং', d.memo]); if (d.chalan) kv.push(['চালান নং', d.chalan]); }
   if (d.doc) kv.push([d.type === 'RECEIPT' ? 'কোম্পানির চালান' : d.type === 'BOOKING' ? 'বুকিং নং' : 'অন্য নং', d.doc]);
   kv.push(['তারিখ', dmy(d.date)]);
   if (d.party) { kv.push([d.type === 'RECEIPT' || d.type === 'COMPANY_PAY' ? 'কোম্পানি' : 'নাম', d.party.name]); if (d.party.phone) kv.push(['মোবাইল', d.party.phone]); if (d.party.address) kv.push(['ঠিকানা', d.party.address]); }
@@ -1987,10 +2008,10 @@ function docModel(d) {
   if (d.reverses) b.push({ t: 'stamp', s: d.reverses + ' এন্ট্রির বাতিল' });
   var goods = d.goods.filter(function (g) { return g.kind !== 'GOODS' || d.type === 'RECEIPT' || d.type === 'MOVE'; });
   if (goods.length) {
-    var priced = goods.some(function (g) { return g.rate !== undefined; });
+    var priced = !chalan && goods.some(function (g) { return g.rate !== undefined; });
     // one sale can go out from the shop, the warehouse and straight from the company: then each line says where from
     var froms = {}; if (d.type === 'DELIVERY') goods.forEach(function (g) { if (g.kind === 'SOLD') froms[g.place] = 1; });
-    var mixed = Object.keys(froms).length > 1;
+    var mixed = Object.keys(froms).length > 1 || (chalan && Object.keys(froms).length > 0);   // a chalan always says where the goods leave from
     var fromText = function (g) { if (!mixed || g.kind !== 'SOLD') return ''; if (!g.place) return ' · 🏭 কোম্পানি থেকে সরাসরি'; var pl = S.meta.places.filter(function (x) { return x.code === g.place; })[0]; return ' · 🏬 ' + (pl ? pl.name : g.place); };
     var rows = goods.map(function (g) {
       var name = g.text + fromText(g) + (g.bookingNo ? ' (বুকিং ' + g.bookingNo + ')' : '') + (g.bundles ? ' · ' + g.bundles + ' বান্ডিল' : '') + (g.pcs ? ' ' + g.pcs + ' পিস' : '');
@@ -1999,6 +2020,13 @@ function docModel(d) {
     b.push({ t: 'tbl', cols: priced ? ['মাল', 'পরিমাণ', 'দর', 'টাকা'] : ['মাল', 'পরিমাণ'], rows: rows });
   }
   var tot = [];
+  if (chalan) {
+    var cnt = goods.length; b.push({ t: 'p', s: 'মোট ' + cnt + ' লাইন মাল। মাল বুঝে পেয়ে সই করুন।' });
+    if (d.note) b.push({ t: 'p', s: 'নোট: ' + d.note });
+    b.push({ t: 'p', s: 'এন্ট্রি ' + d.txn + ' · লিখেছেন ' + d.by + ' · ' + d.saved });
+    b.push({ t: 'sign', items: ['মাল গ্রহীতা', 'ড্রাইভার', 'দোকান / গুদাম'] });
+    return b;
+  }
   if (d.type === 'DELIVERY' || d.type === 'RETURN') {
     tot.push([d.type === 'DELIVERY' ? 'মালের দাম' : 'ফেরত মালের দাম', money(Math.abs(d.gross))]);
     d.charges.forEach(function (c) { tot.push([c.head === 'Labour' ? 'লেবার' : c.head === 'Transport' ? 'গাড়ি ভাড়া' : c.head, money(c.amount)]); });
@@ -2026,7 +2054,7 @@ function docModel(d) {
   if (d.type === 'DELIVERY' && d.business && d.business.note) b.push({ t: 'p', s: d.business.note });
   if (d.checked) b.push({ t: 'p', s: '✔ যাচাই করেছেন: ' + d.checked });
   b.push({ t: 'p', s: 'এন্ট্রি ' + d.txn + ' · লিখেছেন ' + d.by + ' · ' + d.saved });
-  var signs = d.type === 'DELIVERY' ? ['ক্রেতা / গ্রহীতা', 'ড্রাইভার', 'বিক্রেতা'] : d.type === 'COLLECT' ? ['টাকা দাতা', 'টাকা গ্রহীতা'] : ['প্রস্তুতকারী', 'অনুমোদনকারী'];
+  var signs = d.type === 'DELIVERY' ? ['ক্রেতা', 'বিক্রেতা'] : d.type === 'COLLECT' ? ['টাকা দাতা', 'টাকা গ্রহীতা'] : ['প্রস্তুতকারী', 'অনুমোদনকারী'];
   b.push({ t: 'sign', items: signs });
   return b;
 }
@@ -2137,9 +2165,17 @@ function screenDoc(txn) {
   var body = frame('এন্ট্রি ' + txn);
   var box = el('div'); add(body, box);
   authed({ fn: 'doc', txn: txn }).then(function (d) {
-    var blocks = docModel(d);
+    var view = F && F.docView && F.docTxn === txn ? F.docView : 'memo';
+    if (d.type === 'DELIVERY') {
+      // memo and chalan are separate papers: switch between them, each prints and shares on its own
+      var sw = el('div', 'grid noprint');
+      add(sw, btn(view === 'memo' ? 'btn' : 'btn ghost', '🧾 ক্যাশ মেমো', function () { F = F || {}; F.docTxn = txn; F.docView = 'memo'; draw(); }),
+        btn(view === 'chalan' ? 'btn' : 'btn ghost', '🚚 চালান', function () { F = F || {}; F.docTxn = txn; F.docView = 'chalan'; draw(); }));
+      add(box, sw);
+    }
+    var blocks = docModel(d, view);
     add(box, htmlOf(blocks));
-    docTools(box, blocks, d.memo || d.chalan || d.txn, d.party ? d.party.phone : '');
+    docTools(box, blocks, (view === 'chalan' ? d.chalan : d.memo) || d.memo || d.chalan || d.txn, d.party ? d.party.phone : '');
     var act = el('div', 'noprint'); act.style.marginTop = '12px'; add(box, act);
     if (d.queries.length) { var qc = el('div', 'card'); add(qc, el('div', 't1', '🚩 প্রশ্ন')); d.queries.forEach(function (q) { add(qc, el('div', 't2', q.by + ': ' + q.note + ' (' + q.saved + ')')); }); if (d.answer) add(qc, el('div', 'msg ok', 'উত্তর: ' + d.answer)); add(act, qc); }
     var g = el('div', 'grid');

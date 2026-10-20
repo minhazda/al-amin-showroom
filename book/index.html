@@ -1679,6 +1679,7 @@ function startOtherIncome() {
 
 function startCashCount() {
   var accs = accountsOf('Cash', S.branch);
+  if (!accs.length) { alertBox(ERR.NO_ACCOUNT, 'warn'); return; }
   (accs.length > 1 ? pickTile('কোন ক্যাশ বাক্স?', accs.map(function (a) { return { label: a.name, value: a.name, ic: '💵' }; })) : Promise.resolve(accs[0] ? accs[0].name : null)).then(function (acct) {
     if (!acct) return;
     askNumber({ title: 'বাক্সে এখন কত টাকা আছে? (গুনে লিখুন)', decimals: 0 }).then(function (v) {
@@ -2560,8 +2561,8 @@ function screenCheques() {
       add(card, add(el('div', 't1'), document.createTextNode(tk(c.amount) + ' · ' + c.name)), el('div', 't2', [c.bank, 'নং ' + c.chq, 'তারিখ ' + dmy(c.chqDate), CHQ_BN[c.status]].join(' · ')));
       if ((c.status === 'hand' || c.status === 'deposited') && can('chequeClear')) {
         var g = el('div', 'grid3');
-        if (c.status === 'hand') add(g, btn('btn ghost slim', '🏦 জমা', function () { pickTile('কোন ব্যাংকে?', accountsOf('Bank', c.branch).map(function (a) { return { label: a.name, value: a.name, ic: '🏦' }; }), { rows: true }).then(function (acct) { if (acct) submit('chequeDeposit', { cheque: c.id, acct: acct }, 'চেক জমা', function () { draw(); }, { noQueue: true }); }); }));
-        add(g, btn('btn go slim', '✅ ক্লিয়ার', function () { var go = function (acct) { submit('chequeClear', acct ? { cheque: c.id, acct: acct } : { cheque: c.id }, 'চেক ক্লিয়ার', function () { draw(); }, { noQueue: true, expect: { total: c.amount } }); }; if (c.depositedTo) go(null); else pickTile('কোন ব্যাংকে টাকা এল?', accountsOf('Bank', c.branch).map(function (a) { return { label: a.name, value: a.name, ic: '🏦' }; }), { rows: true }).then(function (a) { if (a) go(a); }); }),
+        if (c.status === 'hand') add(g, btn('btn ghost slim', '🏦 জমা', function () { if (!accountsOf('Bank', c.branch).length) { alertBox('এই শাখার কোনো ব্যাংক একাউন্ট খাতায় নেই। মালিক Accounts শিটে ব্যাংক যোগ করলে জমা দেওয়া যাবে।', 'warn'); return; } pickTile('কোন ব্যাংকে?', accountsOf('Bank', c.branch).map(function (a) { return { label: a.name, value: a.name, ic: '🏦' }; }), { rows: true }).then(function (acct) { if (acct) submit('chequeDeposit', { cheque: c.id, acct: acct }, 'চেক জমা', function () { draw(); }, { noQueue: true }); }); }));
+        add(g, btn('btn go slim', '✅ ক্লিয়ার', function () { var go = function (acct) { submit('chequeClear', acct ? { cheque: c.id, acct: acct } : { cheque: c.id }, 'চেক ক্লিয়ার', function () { draw(); }, { noQueue: true, expect: { total: c.amount } }); }; if (c.depositedTo) go(null); else if (!accountsOf('Bank', c.branch).length) alertBox('এই শাখার কোনো ব্যাংক একাউন্ট খাতায় নেই। মালিক Accounts শিটে ব্যাংক যোগ করলে ক্লিয়ার করা যাবে।', 'warn'); else pickTile('কোন ব্যাংকে টাকা এল?', accountsOf('Bank', c.branch).map(function (a) { return { label: a.name, value: a.name, ic: '🏦' }; }), { rows: true }).then(function (a) { if (a) go(a); }); }),
           btn('btn bad slim', '⛔ ফেরত', function () { askText({ title: 'কেন ফেরত এল', max: 160 }).then(function (n) { if (!n) return; askNumber({ title: 'কাস্টমারের কাছ থেকে চেক ফেরতের চার্জ নেবেন? (না নিলে ০)', decimals: 2 }).then(function (fee) { if (fee === null) return; var d = { cheque: c.id, note: n }, ex = { total: c.amount }; if (fee) { d.fee = fee; ex.fee = fee; } submit('chequeBounce', d, 'চেক ফেরত', function () { draw(); }, { noQueue: true, expect: ex }); }); }); }));
         add(card, g);
       }

@@ -1750,7 +1750,7 @@ function startStaffMoney() {
         submit('staffAdvance', { branch: S.branch, staff: sp.id, payment: cleanPay(p) }, label, done(label, function (r) { return [['মোট অগ্রিম', tk(r.advance)]]; }), { expect: { total: p.amount } });
       });
       var month = todayYmd().substring(0, 7), gross, adv = 0;
-      askText({ title: 'কোন মাসের বেতন? (যেমন ' + month + ')', value: month, max: 7 }).then(function (m) {
+      pickTile('কোন মাসের বেতন?', (function () { var MN = ['জানুয়ারি', 'ফেব্রুয়ারি', 'মার্চ', 'এপ্রিল', 'মে', 'জুন', 'জুলাই', 'আগস্ট', 'সেপ্টেম্বর', 'অক্টোবর', 'নভেম্বর', 'ডিসেম্বর'], y = Number(month.substring(0, 4)), mo = Number(month.substring(5, 7)), out = []; for (var i = -3; i <= 0; i++) { var yy = y, mm = mo + i; while (mm < 1) { mm += 12; yy--; } var v = yy + '-' + (mm < 10 ? '0' : '') + mm; out.unshift({ label: MN[mm - 1] + ' ' + yy, value: v, ic: '📅' }); } return out; })(), { rows: true }).then(function (m) {
         if (!m) return; month = m;
         return askNumber({ title: 'মোট বেতন', decimals: 2 });
       }).then(function (g) {
@@ -1910,10 +1910,11 @@ function startAdjust() {
     });
     if (k === 'setoff') {
       var sides = [{ label: 'কাস্টমারের হিসাব', value: 'Customer' }, { label: 'মিল / কোম্পানির হিসাব', value: 'Company' }, { label: 'মালিকের হিসাব', value: 'Owner' }, { label: 'ধার দেওয়া', value: 'LoanGiven' }, { label: 'স্টাফের অগ্রিম', value: 'StaffAdvance' }, { label: 'ব্যাংক ঋণ', value: 'Loan' }];
-      var side = function (title) { return pickTile(title, sides, { rows: true }).then(function (acc) { if (!acc) return null; if (acc === 'Owner') return { account: 'Owner' }; return pickParty({ title: 'কোন পার্টি?' }).then(function (p) { return p ? { account: acc, party: p.id, name: p.name } : null; }); }); };
+      var side = function (title) { return pickTile(title, sides, { rows: true }).then(function (acc) { if (!acc) return null; if (acc === 'Owner') return { account: 'Owner' }; var ty = { Customer: ['customer', 'subdealer', 'other'], Company: ['company'], StaffAdvance: ['staff'], Loan: ['lender'] }[acc]; return pickParty(ty ? { title: 'কোন পার্টি?', types: ty } : { title: 'কোন পার্টি?' }).then(function (p) { return p ? { account: acc, party: p.id, name: p.name } : null; }); }); };
       var dr, cr;
       return side('কোন হিসাব ডেবিট হবে? (যেমন: মিলের পাওনা বা কাস্টমারের অগ্রিম জমা কমবে)').then(function (x) { if (!x) return; dr = x; return side('কোন হিসাব ক্রেডিট হবে? (যেমন: কাস্টমারের বাকি কমবে)'); }).then(function (y) {
         if (!y) return; cr = y;
+        if (dr.account === cr.account && (dr.party || '') === (cr.party || '')) { alertBox('দুই দিকে একই হিসাব হতে পারে না। আলাদা হিসাব বাছুন।', 'warn'); return; }
         askNumber({ title: 'কত টাকা?', decimals: 2 }).then(function (a) {
           if (!a) return;
           askText({ title: 'কেন (লিখতেই হবে)', max: 160 }).then(function (note) { if (!note) return; var label = 'কাটাকাটি ' + tk(a); submit('setoff', { branch: S.branch, debit: dr, credit: cr, amount: a, note: note }, label, done(label), { expect: { total: a } }); });
@@ -1943,7 +1944,7 @@ function screenJournal() {
       var l = { account: acc };
       var partyP = ['Customer', 'Company', 'RebateDue', 'LoanGiven', 'StaffAdvance', 'Loan', 'Rebate', 'Salary', 'BadDebt', 'Interest'].indexOf(acc) >= 0 ? pickParty({ title: 'কোন পার্টি?' }).then(function (p) { if (p) { l.party = p.id; l.name = p.name; } return p; })
         : ['Sales', 'COGS', 'SalesReturn'].indexOf(acc) >= 0 ? pickTile('কোন মাল?', ['Steel', 'Cement', 'Sanitary', 'Other'].map(function (c) { return { label: CAT_BN[c][0], value: c }; })).then(function (c) { if (c) l.party = c; return c; })
-        : ['Expense', 'Charges', 'OtherIncome'].indexOf(acc) >= 0 ? askText({ title: 'খাত (যেমন Transport)', max: 30 }).then(function (h) { if (h) l.party = h; return h; }) : Promise.resolve(true);
+        : ['Expense', 'Charges', 'OtherIncome'].indexOf(acc) >= 0 ? pickTile('কোন খাত?', (acc === 'OtherIncome' ? ['Scrap sale', 'Bank interest', 'Other'] : acc === 'Charges' ? ['Labour', 'Transport'] : ['Labour', 'Transport', 'Fuel', 'Refreshment', 'Utility', 'Rent', 'Repair', 'Office', 'Mobile bill', 'Bank charges', 'Donation', 'Entertainment', 'Legal & fees', 'Other']).map(function (h) { return { label: acc === 'OtherIncome' && h === 'Other' ? 'অন্য আয়' : (HEAD_BN[h] || [h])[0], value: h, ic: (HEAD_BN[h] || [0, '🧾'])[1] }; })).then(function (h) { if (h) l.party = h; return h; }) : Promise.resolve(true);
       partyP.then(function (ok) {
         if (!ok) return;
         pickTile('ডেবিট না ক্রেডিট?', [{ label: 'ডেবিট', value: 'debit' }, { label: 'ক্রেডিট', value: 'credit' }]).then(function (side) {

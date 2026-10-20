@@ -723,10 +723,10 @@ function pinPad(u) {
     function paint() { clear(dots); for (var i = 0; i < Math.max(4, pin.length); i++) add(dots, el('i', i < pin.length ? 'f' : '')); }
     function tryLogin() {
       wait(true, 'খুলছে…');
-      api({ fn: 'login', user: u.id, pin: pin }).then(function (r) {
+      itemsDigest().then(function (have) { return api({ fn: 'login', user: u.id, pin: pin, have: have }); }).then(function (r) {
         wait(false); closeModal();
         S.token = r.token; S.user = r.user; S.queueKey = r.queueKey; lastTouch = Date.now();
-        afterLogin();
+        afterLogin(r.meta || null, r.items || null);
       }, function (e) {
         wait(false); pin = ''; paint();
         if (e.code === 'DEVICE') { closeModal(); showEnroll(); return; }
@@ -744,9 +744,9 @@ function pinPad(u) {
     paint();
   });
 }
-function afterLogin() {
+function afterLogin(meta, items) {
   wait(true, 'মালের তালিকা আসছে…');
-  Promise.all([loadItems(), readRetry({ fn: 'meta' }, 2).then(function (m) { S.meta = m; })]).then(function () {
+  Promise.all([loadItems(items), meta ? Promise.resolve(S.meta = meta) : readRetry({ fn: 'meta' }, 2).then(function (m) { S.meta = m; })]).then(function () {
     wait(false);
     var saved = lsGet(LS_BRANCH + S.user.id);
     var codes = S.meta.branches.map(function (b) { return b.code; });
@@ -775,15 +775,19 @@ function indexItems(rows) {
   S.byRef = {};
   S.items.forEach(function (it) { S.byRef[it.ref] = it; });
 }
-function loadItems() {
+function itemsDigest() {
   var cached = lsGet(LS_ITEMS);
-  if (!Array.isArray(cached)) cached = null;
-  return (cached ? sha256Hex(JSON.stringify(cached)) : Promise.resolve(null)).then(function (digest) {
-    return readRetry({ fn: 'items', have: digest }, 2).then(function (r) {
-      if (r.items) { indexItems(r.items); lsSet(LS_ITEMS, r.items); } else indexItems(cached);
-      S.photos = r.photos || {};
-    });
-  });
+  return Array.isArray(cached) ? sha256Hex(JSON.stringify(cached)) : Promise.resolve(null);
+}
+/** Uses the book's answer about the goods list: the new list, or "yours is current". */
+function takeItems(r) {
+  var cached = lsGet(LS_ITEMS);
+  if (r.items) { indexItems(r.items); lsSet(LS_ITEMS, r.items); } else indexItems(Array.isArray(cached) ? cached : []);
+  S.photos = r.photos || {};
+}
+function loadItems(already) {
+  if (already) { takeItems(already); return Promise.resolve(); }      // it came with the login
+  return itemsDigest().then(function (digest) { return readRetry({ fn: 'items', have: digest }, 2).then(takeItems); });
 }
 function itemName(ref) { var it = S.byRef[ref]; return it ? [it.brand, it.product, it.size].filter(Boolean).join(' ') : ref; }
 function sizeOf(it) { return it.any ? 'সব সাইজ' : it.size; }

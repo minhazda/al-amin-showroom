@@ -91,6 +91,8 @@
   table.t td.r, table.t th.r { text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums; }
   .tw { overflow-x:auto; border:1px solid var(--line); border-radius:12px; margin-bottom:10px; }
   .doc { background:#fff; color:#000; border:1px solid var(--line); border-radius:6px; padding:16px; margin-bottom:12px; font-size:15px; }
+  @media screen { .doc { overflow-x:auto; } }   /* a wide report scrolls inside its paper, the page itself never slides sideways */
+  @media screen and (max-width:380px) { .doc { padding:10px; } .doc td, .doc th { padding-left:3px !important; padding-right:3px !important; } }
   .doc h1 { font-size:21px; margin:0; text-align:center; } .doc h2 { font-size:17px; margin:10px 0 6px; text-align:center; border-top:2px solid #000; border-bottom:2px solid #000; padding:4px 0; }
   .doc .c { text-align:center; font-size:13px; } .doc .p { font-size:13px; margin:6px 0; }
   .doc table { width:100%; border-collapse:collapse; margin:6px 0; } .doc td, .doc th { padding:4px 3px; border-bottom:1px solid #bbb; vertical-align:top; font-size:14px; } .doc th { border-bottom:2px solid #000; text-align:left; }

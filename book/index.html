@@ -300,10 +300,10 @@ function api(req) {
   });
 }
 /** Waits at most 60 seconds for the book. After that the outcome is unknown: the entry stays on the phone and is sent again. */
-function timed(promise) {
+function timed(promise, ms) {
   return new Promise(function (resolve, reject) {
     var done = false;
-    var t = setTimeout(function () { if (!done) { done = true; var e = new Error('TIMEOUT'); e.code = 'TIMEOUT'; reject(e); } }, 60000);
+    var t = setTimeout(function () { if (!done) { done = true; var e = new Error('TIMEOUT'); e.code = 'TIMEOUT'; reject(e); } }, ms || 60000);
     promise.then(function (v) { if (!done) { done = true; clearTimeout(t); resolve(v); } }, function (e) { if (!done) { done = true; clearTimeout(t); reject(e); } });
   });
 }
@@ -331,9 +331,16 @@ function authed(req) {
   });
 }
 /** A read with the waiting screen and the error shown; resolves only on success. */
+/* A read is safe to ask again: when the answer is lost on the way (seen live: Google's reply not reaching the phone), try twice more. */
+function readRetry(req, left) {
+  return timed(authed(JSON.parse(JSON.stringify(req))), 45000).catch(function (e) {
+    if (left > 0 && (e.code === 'LINK' || e.code === 'NET' || e.code === 'TIMEOUT')) return new Promise(function (r) { setTimeout(r, 1500); }).then(function () { return readRetry(req, left - 1); });
+    throw e;
+  });
+}
 function fetchData(req, text) {
   wait(true, text);
-  return timed(authed(req)).then(function (d) { wait(false); return d; }, function (e) { wait(false); if (e.code !== 'AUTH' && e.code !== 'DEVICE' && e.code !== 'OLD_PAGE') alertBox(errText(e), 'bad'); throw e; });
+  return readRetry(req, 2).then(function (d) { wait(false); return d; }, function (e) { wait(false); if (e.code !== 'AUTH' && e.code !== 'DEVICE' && e.code !== 'OLD_PAGE') alertBox(errText(e), 'bad'); throw e; });
 }
 
 /* ---------- entries waiting on the phone ----------
@@ -682,7 +689,7 @@ function pinPad(u) {
 }
 function afterLogin() {
   wait(true, 'মালের তালিকা আসছে…');
-  Promise.all([loadItems(), authed({ fn: 'meta' }).then(function (m) { S.meta = m; })]).then(function () {
+  Promise.all([loadItems(), readRetry({ fn: 'meta' }, 2).then(function (m) { S.meta = m; })]).then(function () {
     wait(false);
     var saved = lsGet(LS_BRANCH + S.user.id);
     var codes = S.meta.branches.map(function (b) { return b.code; });
@@ -714,7 +721,7 @@ function loadItems() {
   var cached = lsGet(LS_ITEMS);
   if (!Array.isArray(cached)) cached = null;
   return (cached ? sha256Hex(JSON.stringify(cached)) : Promise.resolve(null)).then(function (digest) {
-    return authed({ fn: 'items', have: digest }).then(function (r) {
+    return readRetry({ fn: 'items', have: digest }, 2).then(function (r) {
       if (r.items) { indexItems(r.items); lsSet(LS_ITEMS, r.items); } else indexItems(cached);
       S.photos = r.photos || {};
     });
@@ -850,7 +857,7 @@ function pickItem(opts) {
 /* ---------- parties ---------- */
 function loadParties(force) {
   if (S.parties && !force) return Promise.resolve(S.parties);
-  return authed({ fn: 'parties' }).then(function (r) { S.parties = r.parties; S.partyById = {}; r.parties.forEach(function (p) { S.partyById[p.id] = p; }); return S.parties; });
+  return readRetry({ fn: 'parties' }, 2).then(function (r) { S.parties = r.parties; S.partyById = {}; r.parties.forEach(function (p) { S.partyById[p.id] = p; }); return S.parties; });
 }
 function partyName(id) { return S.partyById && S.partyById[id] ? S.partyById[id].name : id; }
 /** Picks a party: search by name, phone or number; or make a new one. opts: types, title, allowNew, newType. Resolves the party or null. */
@@ -1090,7 +1097,7 @@ function screenHome() {
 function loadDashboard(box) {
   add(box, el('div', 'mut sm', 'হিসাব আসছে…'));
   var branch = S.branch || '';
-  authed({ fn: 'today', branch: branch }).then(function (d) {
+  readRetry({ fn: 'today', branch: branch }, 2).then(function (d) {
     clear(box);
     if (d.broken) add(box, el('div', 'msg bad', '⚠️ ' + ERR.BOOK_BROKEN));
     if (isReader() && S.meta.branches.length > 1) {
@@ -1188,7 +1195,7 @@ function showSaved(title, res, lines) {
 /* ---------- shared pieces of the forms ---------- */
 function field(label, value, fn, need) { var f = btn('field' + (need ? ' need' : ''), null, fn); add(f, el('span', 'lab', label), el('span', 'val', value)); return f; }
 function boardMap() {
-  return authed({ fn: 'rates', branch: S.branch }).then(function (r) { var m = {}; r.rates.forEach(function (x) { m[x.ref] = x; }); return m; }, function () { return {}; });
+  return readRetry({ fn: 'rates', branch: S.branch }, 2).then(function (r) { var m = {}; r.rates.forEach(function (x) { m[x.ref] = x; }); return m; }, function () { return {}; });
 }
 /** The board's rate for an item in a unit, falling back to the brand's "any size" rate. */
 function boardFor(board, it, per, cost) {
@@ -1236,7 +1243,7 @@ function needParty(types, title, allowNew) { return pickParty({ types: types, ti
 function loadPartyDetail() {
   if (!F || !F.party) return;
   var id = F.party.id;
-  authed({ fn: 'party', id: id }).then(function (r) { if (F && F.party && F.party.id === id) { F.partyInfo = r.party; draw(); } }, function () { });
+  readRetry({ fn: 'party', id: id }, 2).then(function (r) { if (F && F.party && F.party.id === id) { F.partyInfo = r.party; draw(); } }, function () { });
 }
 function siteField(body) {
   if (!F.party) return;

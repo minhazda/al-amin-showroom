@@ -135,7 +135,7 @@ var TYPE_BN = { DELIVERY: ['ডেলিভারি / বিক্রি', '�
   MOVE: ['মাল সরানো', '🚛'], COUNT: ['মাল গোনা (স্টক মেলানো)', '🔢'], OPENING_STOCK: ['শুরুর স্টক', '📦'], PARTY: ['নতুন পার্টি', '➕'], PARTY_EDIT: ['পার্টির তথ্য বদল', '✏️'], RATE: ['আজকের দাম', '💲'],
   FOLLOWUP: ['তাগাদা নোট', '📞'], FLAG: ['প্রশ্ন / ভুল জানানো', '🚩'], ANSWER: ['উত্তর', '💬'], CHECKED: ['যাচাই হয়েছে', '✔️'], REVIEWED: ['মালিক দেখেছেন', '👁️'], CASH_COUNT: ['ক্যাশ গোনা', '🔢'],
   LOCK: ['হিসাব বন্ধ', '🔒'], OPENING: ['শুরুর জের', '📂'], REVERSAL: ['বাতিল এন্ট্রি', '❌'], BOOK_REPAIR: ['খাতা মেরামত', '🛠️'], PHOTO: ['মালের ছবি', '📷'] };
-var CAT_BN = { Steel: ['রড', '🔩'], Cement: ['সিমেন্ট', '🧱'], Other: ['অন্যান্য', '📦'] };
+var CAT_BN = { Steel: ['রড', '🔩'], Cement: ['সিমেন্ট', '🧱'], Sanitary: ['স্যানিটারি ও ফিটিংস', '🚿'], Other: ['অন্যান্য', '📦'] };
 var PER_BN = { MT: 'টন', kg: 'কেজি', bag: 'ব্যাগ', pcs: 'পিস' };
 var ERR = {
   NET: 'ইন্টারনেট নেই বা দুর্বল।', AUTH: 'আবার পিন দিন।', LOGIN: 'পিন ভুল হয়েছে।',
@@ -278,18 +278,67 @@ function norm(t) {
   return s.replace(/\s+/g, ' ').trim().toLowerCase();
 }
 
-/* ---------- talking to the book ---------- */
+/* ---------- talking to the book ----------
+   From GitHub Pages the page reaches the book in one of two ways:
+   1. the bridge: a hidden frame served by the book (?bridge=1) that passes requests through google.script.run,
+      whose answer comes back in the same reply;
+   2. a plain POST to the book's address, whose answer comes through a one-time redirect address. Seen live on
+      20 Oct: when the browser had to fetch that address twice, the answer was lost although the book had done the work.
+   The bridge is used when it is ready; otherwise, or if it fails, the plain POST. */
+var BRIDGE = { win: null, origin: '', ready: false, failed: false, waiting: {}, n: 0 };
+function bridgeStart() {
+  if (BRIDGE.started || (window.google && google.script && google.script.run) || EXEC_URL.indexOf('REPLACE_WITH') >= 0) return;
+  BRIDGE.started = true;
+  window.addEventListener('message', function (ev) {
+    var m = ev.data;
+    if (!m || typeof m !== 'object' || m.t !== 'aat') return;
+    if (!/^https:\/\/[a-z0-9-]+(\.[a-z0-9-]+)*\.googleusercontent\.com$/.test(ev.origin)) return;   // only the book's own frame
+    if (m.ready) { if (!BRIDGE.win) { BRIDGE.win = ev.source; BRIDGE.origin = ev.origin; BRIDGE.ready = true; } return; }
+    if (ev.source !== BRIDGE.win || typeof m.id !== 'string' || !BRIDGE.waiting[m.id]) return;
+    var w = BRIDGE.waiting[m.id]; delete BRIDGE.waiting[m.id]; w(m);
+  });
+  var f = document.createElement('iframe');
+  f.src = EXEC_URL + '?bridge=1'; f.title = 'bridge'; f.setAttribute('aria-hidden', 'true'); f.tabIndex = -1;
+  f.style.cssText = 'position:absolute;width:1px;height:1px;border:0;left:-9999px;top:0;opacity:0';
+  (document.body || document.documentElement).appendChild(f);
+  setTimeout(function () { if (!BRIDGE.ready) BRIDGE.failed = true; }, 15000);   // no bridge (older book code): plain POST only
+}
+/** Sends through the bridge; resolves with the book's answer object, rejects when the bridge cannot carry it. */
+function viaBridge(req) {
+  return new Promise(function (resolve, reject) {
+    var id = 'b' + (++BRIDGE.n) + '-' + Date.now();
+    var t = setTimeout(function () { if (BRIDGE.waiting[id]) { delete BRIDGE.waiting[id]; reject(new Error('bridge slow')); } }, 30000);   // then the plain POST (a save repeats safely by its rid)
+    BRIDGE.waiting[id] = function (m) { clearTimeout(t); if (m.err !== undefined) reject(new Error(m.err)); else resolve(m.r); };
+    try { BRIDGE.win.postMessage({ t: 'aat', id: id, req: req }, BRIDGE.origin); } catch (e) { delete BRIDGE.waiting[id]; reject(e); }
+  });
+}
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bridgeStart); else bridgeStart();
+/** Waits (a little) for the bridge while the page is starting. */
+function bridgeWait() {
+  if (BRIDGE.ready || BRIDGE.failed || !BRIDGE.started) return Promise.resolve();
+  return new Promise(function (res) { var t0 = Date.now(), iv = setInterval(function () { if (BRIDGE.ready || BRIDGE.failed || Date.now() - t0 > 6000) { clearInterval(iv); if (!BRIDGE.ready) BRIDGE.failed = true; res(); } }, 100); });
+}
 function api(req) {
   req.dev = S.dev; req.v = PAGE_VERSION;
   return new Promise(function (resolve, reject) {
     var fail = function (code, info) { var e = new Error(code); e.code = code; e.info = info || null; reject(e); };
     var answer = function (r) { if (r && r.ok) resolve(r.data); else fail((r && r.code) || 'SERVER', r && r.info); };
     if (!(window.google && google.script && google.script.run)) {
+      if (BRIDGE.started && !BRIDGE.failed) {
+        bridgeWait().then(function () {
+          if (!BRIDGE.ready) return post();
+          viaBridge(req).then(function (r) { if (r && typeof r === 'object') answer(r); else post(); }, function () { post(); });   // the bridge could not carry it: plain POST (a save repeats safely by its rid)
+        });
+        return;
+      }
+      post();
+      return;
+    }
+    function post() {
       if (!window.fetch) { fail('LINK', { msg: 'no fetch' }); return; }
       window.fetch(EXEC_URL, { method: 'POST', body: JSON.stringify(req), headers: { 'Content-Type': 'text/plain;charset=utf-8' }, credentials: 'omit', redirect: 'follow', cache: 'no-store' })
         .then(function (resp) { return resp.text().then(function (t) { var j = null; try { j = JSON.parse(t); } catch (e) { } if (!j) fail('LINK', { msg: 'HTTP ' + resp.status }); else answer(j); }); },
           function (err) { fail(navigator.onLine === false ? 'NET' : 'LINK', { msg: String((err && err.message) || err || '').substring(0, 120) }); });
-      return;
     }
     try {
       google.script.run
@@ -335,6 +384,14 @@ function authed(req) {
 function readRetry(req, left) {
   return timed(authed(JSON.parse(JSON.stringify(req))), 45000).catch(function (e) {
     if (left > 0 && (e.code === 'LINK' || e.code === 'NET' || e.code === 'TIMEOUT')) return new Promise(function (r) { setTimeout(r, 1500); }).then(function () { return readRetry(req, left - 1); });
+    throw e;
+  });
+}
+/* A save whose answer was lost is sent again at once, the very same request (same rid): the book saves it once
+   and answers the repeat with the first answer, so the person sees "saved" instead of "kept on the phone". */
+function saveRetry(req, left) {
+  return timed(authed(req)).catch(function (e) {
+    if (left > 0 && e.code === 'LINK') return new Promise(function (r) { setTimeout(r, 1500); }).then(function () { return saveRetry(req, left - 1); });
     throw e;
   });
 }
@@ -454,7 +511,7 @@ function submit(kind, data, label, onSaved, opts) {
   var stored = false;
   kept.then(function (ok) {
     stored = ok === true;
-    return timed(authed(req));
+    return saveRetry(req, 2);
   }).then(function (res) {
     delete S.inflight[rid]; queueDrop(rid); wait(false); S.parties = null; onSaved(res);
   }, function (e) {
@@ -803,12 +860,12 @@ function pickItem(opts) {
     var state = { cat: opts.cat || null, brand: null, group: null, q: '' };
     function paint() {
       openModal(function (s) {
-        var cats = ['Steel', 'Cement', 'Other'].filter(function (c) { return list.some(function (it) { return it.cat === c; }); });
+        var cats = ['Steel', 'Cement', 'Sanitary', 'Other'].filter(function (c) { return list.some(function (it) { return it.cat === c; }); });
         if (!state.cat && cats.length === 1) state.cat = cats[0];      // the showroom has only one kind of goods: straight to the companies
         if (!state.cat) {
           add(s, el('div', 'sec', 'কোন মাল?'));
           var g = el('div', 'grid');
-          ['Steel', 'Cement', 'Other'].forEach(function (c) { if (!list.some(function (it) { return it.cat === c; })) return; var t = btn('tile', null, function () { state.cat = c; paint(); }); add(t, el('div', 'ic', CAT_BN[c][1]), el('div', null, CAT_BN[c][0])); add(g, t); });
+          ['Steel', 'Cement', 'Sanitary', 'Other'].forEach(function (c) { if (!list.some(function (it) { return it.cat === c; })) return; var t = btn('tile', null, function () { state.cat = c; paint(); }); add(t, el('div', 'ic', CAT_BN[c][1]), el('div', null, CAT_BN[c][0])); add(g, t); });
           add(s, g, btn('btn ghost', 'বাতিল', function () { closeModal(); res(null); }));
           return;
         }
@@ -1119,7 +1176,7 @@ function loadDashboard(box) {
     if (isReader()) {
       add(box, el('div', 'sec', 'এই মাস'));
       var g2 = el('div', 'grid');
-      add(g2, stat('বিক্রি', tk(netSales(mon)), retNote(mon)), stat('মালের ওপর লাভ (গ্রস লাভ)', tk(mon.gross), mon.unknownCostQty ? '⚠️ কিছু মালের কেনা দাম নেই — লাভ বেশি দেখাচ্ছে' : mon.estimatedCost ? 'আনুমানিক খরচ ' + tk(mon.estimatedCost) : '', mon.gross >= 0 ? 'pos' : 'neg'),
+      add(g2, stat('বিক্রি', tk(netSales(mon)), retNote(mon)), stat('মালের ওপর লাভ (গ্রস লাভ)', tk(mon.gross), mon.costPending ? 'কেনা দাম নেই, লাভে ধরা হয়নি: ' + tk(mon.costPending) : mon.estimatedCost ? 'আনুমানিক খরচ ' + tk(mon.estimatedCost) : '', mon.gross >= 0 ? 'pos' : 'neg'),
         stat('খরচ + বেতন', tk(mon.expenses + mon.salary)), stat('নিট লাভ', tk(mon.net), 'মালিক নিয়েছেন ' + tk(mon.ownerOut), mon.net >= 0 ? 'pos' : 'neg'));
       add(box, g2);
     }
@@ -1885,7 +1942,7 @@ function screenJournal() {
       if (!acc) return;
       var l = { account: acc };
       var partyP = ['Customer', 'Company', 'RebateDue', 'LoanGiven', 'StaffAdvance', 'Loan', 'Rebate', 'Salary', 'BadDebt', 'Interest'].indexOf(acc) >= 0 ? pickParty({ title: 'কোন পার্টি?' }).then(function (p) { if (p) { l.party = p.id; l.name = p.name; } return p; })
-        : ['Sales', 'COGS', 'SalesReturn'].indexOf(acc) >= 0 ? pickTile('কোন মাল?', ['Steel', 'Cement', 'Other'].map(function (c) { return { label: CAT_BN[c][0], value: c }; })).then(function (c) { if (c) l.party = c; return c; })
+        : ['Sales', 'COGS', 'SalesReturn'].indexOf(acc) >= 0 ? pickTile('কোন মাল?', ['Steel', 'Cement', 'Sanitary', 'Other'].map(function (c) { return { label: CAT_BN[c][0], value: c }; })).then(function (c) { if (c) l.party = c; return c; })
         : ['Expense', 'Charges', 'OtherIncome'].indexOf(acc) >= 0 ? askText({ title: 'খাত (যেমন Transport)', max: 30 }).then(function (h) { if (h) l.party = h; return h; }) : Promise.resolve(true);
       partyP.then(function (ok) {
         if (!ok) return;
@@ -1961,7 +2018,7 @@ function screenRates() {
   fetchData({ fn: 'rates', branch: S.branch }).then(function (r) {
     var m = {}; r.rates.forEach(function (x) { m[x.ref] = x; });
     var list = S.items.filter(function (it) { return it.active; });
-    ['Steel', 'Cement', 'Other'].forEach(function (cat) {
+    ['Steel', 'Cement', 'Sanitary', 'Other'].forEach(function (cat) {
       var its = list.filter(function (it) { return it.cat === cat; });
       if (!its.length) return;
       add(box, el('div', 'sec', CAT_BN[cat][0]));
@@ -2367,16 +2424,17 @@ function reportFrame(title, blocksFn, req, opts) {
 }
 function figureRows(d, withProfit) {
   var r = [['বিক্রি', money(d.sales)]];
-  d.byCategory.forEach(function (x) { r.push(['   ' + (CAT_BN[x.name] || [x.name])[0], money(x.amount)]); });
+  d.byCategory.forEach(function (x) { r.push(['   ' + (CAT_BN[x.name] || [x.name])[0], money(x.amount)]); (d.byBrand || []).forEach(function (b) { if (b.category === x.name) r.push(['      ' + b.brand, money(b.amount)]); }); });
   d.sold.forEach(function (x) { r.push(['   পরিমাণ ' + (CAT_BN[x.category] || [x.category])[0], qtyText(x.qty, x.per)]); });
   if (d.returns) r.push(['ফেরত', '− ' + money(d.returns)]);
   r.push(['বিলে লেবার/গাড়ি', money(d.charges)]);
   if (d.discount) r.push(['ছাড়', '− ' + money(d.discount)]);
   if (withProfit && d.cogs !== undefined) {
+    if (d.costPending) r.push(['কেনা দাম নেই — এই বিক্রি লাভে ধরা হয়নি', '− ' + money(d.costPending)]);
+    if (d.costReleased) r.push(['আগের বিক্রি, কেনা দাম দেওয়ায় এখন লাভে ধরা হলো', money(d.costReleased)]);
     r.push(['মালের কেনা খরচ', '− ' + money(d.cogs)]);
     if (d.estimatedCost) r.push(['   এর মধ্যে আনুমানিক', money(d.estimatedCost)]);
     r.push(['মালের ওপর লাভ (গ্রস লাভ)', money(d.gross), true]);
-    if (d.unknownCostQty) r.push(['   ⚠️ কিছু মালের কেনা দাম খাতায় নেই — তাদের খরচ ধরা হয়নি, তাই লাভ আসলের চেয়ে বেশি দেখাচ্ছে। “কেনা দাম দিন”-এ দাম দিলে ঠিক হবে।', '']);
     r.push(['রিবেট', money(d.rebate)]); if (d.otherIncome) r.push(['অন্য আয়', money(d.otherIncome)]);
     r.push(['খরচ', '− ' + money(d.expenses)]);
     d.byHead.forEach(function (x) { r.push(['   ' + (HEAD_BN[x.name] || [x.name])[0], money(x.amount)]); });
@@ -2385,7 +2443,6 @@ function figureRows(d, withProfit) {
     if (d.badDebt) r.push(['অনাদায়ী বাকি', '− ' + money(d.badDebt)]);
     if (d.stockLoss) r.push(['স্টক ঘাটতি', '− ' + money(d.stockLoss)]);
     r.push(['নিট লাভ', money(d.net), true]);
-    if (d.unknownCostQty) r.push(['   ⚠️ উপরের লাভ পুরো নয় (কিছু মালের খরচ বাদ পড়েছে)', '']);
     r.push(['মালিক নিয়েছেন (খরচ নয়)', money(d.ownerOut)]);
   }
   return r;
@@ -2435,7 +2492,7 @@ function screenPosition() {
     var b = bizHead({ name: (S.boot && S.boot.business) });
     b.push({ t: 'h2', s: 'ব্যবসার অবস্থান — ' + dmy(d.date) });
     var BN = { 'Cash': 'ক্যাশ', 'Mobile money': 'মোবাইল', 'Bank': 'ব্যাংক', 'Cheques in hand': 'হাতে চেক', 'Owed by customers': 'কাস্টমারের বাকি', 'Paid ahead to companies': 'মিলে অগ্রিম জমা', 'Stock (at cost)': 'স্টক (কেনা দামে)', 'Rebates expected': 'রিবেট পাওনা', 'Loans given': 'ধার দেওয়া', 'Staff advances': 'স্টাফের অগ্রিম',
-      'Owed to companies': 'মিল/কোম্পানির পাওনা', 'Customer advances (goods or money owed to them)': 'কাস্টমারের অগ্রিম (মাল বা টাকা)', 'Bank loans': 'ব্যাংক ঋণ', 'Opening balances (capital brought in)': 'শুরুর জের', 'Owner: money in less drawings': 'মালিক: দেওয়া − নেওয়া', 'Profit not yet closed': 'চলতি লাভ (হিসাবে যোগ হয়নি)' };
+      'Owed to companies': 'মিল/কোম্পানির পাওনা', 'Customer advances (goods or money owed to them)': 'কাস্টমারের অগ্রিম (মাল বা টাকা)', 'Bank loans': 'ব্যাংক ঋণ', 'Opening balances (capital brought in)': 'শুরুর জের', 'Owner: money in less drawings': 'মালিক: দেওয়া − নেওয়া', 'Profit not yet closed': 'চলতি লাভ (হিসাবে যোগ হয়নি)', 'Sales waiting for a buying price (not counted as profit yet)': 'কেনা দাম নেই এমন বিক্রি (এখনো লাভে ধরা হয়নি)' };
     var rows = function (l) { return l.map(function (x) { return [BN[x.name] || x.name, money(x.amount)]; }); };
     b.push({ t: 'p', s: 'যা আছে' }); b.push({ t: 'tot', rows: rows(d.assets).concat([['মোট', money(d.totalAssets), true]]) });
     b.push({ t: 'p', s: 'যা দেনা' }); b.push({ t: 'tot', rows: rows(d.liabilities).concat([['মোট', money(d.totalLiabilities), true]]) });

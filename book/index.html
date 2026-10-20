@@ -164,7 +164,7 @@ var ERR = {
   NEED_SIZE: 'কোন সাইজ গেল, বাছুন।', BOOKING_RATE: 'বুকিং-এর মাল বুকিং-এর দামেই যায়।', WRONG_BOOKING: 'এই বুকিং এই পার্টির নয়।', OVER_CREDIT: 'এই পার্টির বাকির সীমা পার হয়ে যাবে। মালিককে বলুন।',
   BAD_BRANCH: 'শাখা ঠিক নেই।', BAD_PLACE: 'জায়গা ঠিক নেই।', LOCKED_PERIOD: 'এই তারিখের হিসাব বন্ধ করা আছে।', OVER_ADVANCE: 'অগ্রিমের চেয়ে বেশি কাটা যাবে না।', OVER_LOAN: 'পাওনার চেয়ে বেশি।',
   NOT_BALANCED: 'ডেবিট আর ক্রেডিট সমান নয়।', NOTHING_TO_DO: 'কিছু বদলায়নি।', BAD_PHOTO: 'ছবি খুব বড় বা ঠিক নেই।', SERVER: 'সার্ভারে সমস্যা হয়েছে। আবার চেষ্টা করুন।',
-  TIMEOUT: 'খাতা থেকে উত্তর আসতে দেরি হচ্ছে।', BAD_REQUEST: 'কোথাও ভুল হয়েছে। পাতাটি বন্ধ করে আবার খুলুন।',
+  TIMEOUT: 'খাতা থেকে উত্তর আসতে দেরি হচ্ছে। নেট দেখে আবার চেষ্টা করুন।', BAD_REQUEST: 'কোথাও ভুল হয়েছে। পাতাটি বন্ধ করে আবার খুলুন।',
   // clear refusals the book gives (each one means: nothing was saved)
   HAS_RETURNS: 'এই চালানের মাল ফেরত এসেছে। আগে ফেরতের এন্ট্রিগুলো বাতিল করুন, তারপর এটি বাতিল করুন।',
   STOCK_MOVED: 'এই মাল এর পরে বিক্রি / সরানো / দাম দেওয়া হয়েছে, তাই এটি আর বাতিল করা যায় না। ভুল ঠিক করতে উল্টো এন্ট্রি লিখুন (যেমন মাল ফেরত), না বুঝলে মালিককে বলুন।',
@@ -333,7 +333,7 @@ function authed(req) {
 /** A read with the waiting screen and the error shown; resolves only on success. */
 function fetchData(req, text) {
   wait(true, text);
-  return authed(req).then(function (d) { wait(false); return d; }, function (e) { wait(false); if (e.code !== 'AUTH' && e.code !== 'DEVICE' && e.code !== 'OLD_PAGE') alertBox(errText(e), 'bad'); throw e; });
+  return timed(authed(req)).then(function (d) { wait(false); return d; }, function (e) { wait(false); if (e.code !== 'AUTH' && e.code !== 'DEVICE' && e.code !== 'OLD_PAGE') alertBox(errText(e), 'bad'); throw e; });
 }
 
 /* ---------- entries waiting on the phone ----------
@@ -956,7 +956,7 @@ function askPayment(dir, branch, preset) {
     if (type === 'Cash' || type === 'Mobile' || type === 'Bank' || (type === 'Cheque' && dir !== 'in')) {
       var accs = accountsOf(type === 'Cheque' ? 'Bank' : type, branch);
       if (type === 'Cash' && accs.length <= 1) return true;
-      if (!accs.length) { alertBox(ERR.NO_ACCOUNT, 'warn'); return null; }
+      if (!accs.length) { alertBox(ERR.NO_ACCOUNT.replace('ক্যাশের', { Cash: 'ক্যাশের', Mobile: 'মোবাইল ব্যাংকিং (বিকাশ/নগদ)-এর', Bank: 'ব্যাংকের', Cheque: 'ব্যাংকের' }[type] || 'এই ধরনের'), 'warn'); return null; }
       if (accs.length === 1) { p.acct = accs[0].name; return true; }
       return pickTile('আমাদের কোন একাউন্ট?', accs.map(function (x) { return { label: x.name, sub: x.details, value: x.name, ic: (METHOD_BN[p.method] || ['', '🏦'])[1] }; }), { rows: true }).then(function (acc) { if (!acc) return null; p.acct = acc; return true; });
     }
@@ -1112,7 +1112,7 @@ function loadDashboard(box) {
     if (isReader()) {
       add(box, el('div', 'sec', 'এই মাস'));
       var g2 = el('div', 'grid');
-      add(g2, stat('বিক্রি', tk(netSales(mon)), retNote(mon)), stat('মালের ওপর লাভ (গ্রস লাভ)', tk(mon.gross), mon.estimatedCost ? 'আনুমানিক খরচ ' + tk(mon.estimatedCost) : '', mon.gross >= 0 ? 'pos' : 'neg'),
+      add(g2, stat('বিক্রি', tk(netSales(mon)), retNote(mon)), stat('মালের ওপর লাভ (গ্রস লাভ)', tk(mon.gross), mon.unknownCostQty ? '⚠️ কিছু মালের কেনা দাম নেই — লাভ বেশি দেখাচ্ছে' : mon.estimatedCost ? 'আনুমানিক খরচ ' + tk(mon.estimatedCost) : '', mon.gross >= 0 ? 'pos' : 'neg'),
         stat('খরচ + বেতন', tk(mon.expenses + mon.salary)), stat('নিট লাভ', tk(mon.net), 'মালিক নিয়েছেন ' + tk(mon.ownerOut), mon.net >= 0 ? 'pos' : 'neg'));
       add(box, g2);
     }
@@ -2369,6 +2369,7 @@ function figureRows(d, withProfit) {
     r.push(['মালের কেনা খরচ', '− ' + money(d.cogs)]);
     if (d.estimatedCost) r.push(['   এর মধ্যে আনুমানিক', money(d.estimatedCost)]);
     r.push(['মালের ওপর লাভ (গ্রস লাভ)', money(d.gross), true]);
+    if (d.unknownCostQty) r.push(['   ⚠️ কিছু মালের কেনা দাম খাতায় নেই — তাদের খরচ ধরা হয়নি, তাই লাভ আসলের চেয়ে বেশি দেখাচ্ছে। “কেনা দাম দিন”-এ দাম দিলে ঠিক হবে।', '']);
     r.push(['রিবেট', money(d.rebate)]); if (d.otherIncome) r.push(['অন্য আয়', money(d.otherIncome)]);
     r.push(['খরচ', '− ' + money(d.expenses)]);
     d.byHead.forEach(function (x) { r.push(['   ' + (HEAD_BN[x.name] || [x.name])[0], money(x.amount)]); });
@@ -2377,6 +2378,7 @@ function figureRows(d, withProfit) {
     if (d.badDebt) r.push(['অনাদায়ী বাকি', '− ' + money(d.badDebt)]);
     if (d.stockLoss) r.push(['স্টক ঘাটতি', '− ' + money(d.stockLoss)]);
     r.push(['নিট লাভ', money(d.net), true]);
+    if (d.unknownCostQty) r.push(['   ⚠️ উপরের লাভ পুরো নয় (কিছু মালের খরচ বাদ পড়েছে)', '']);
     r.push(['মালিক নিয়েছেন (খরচ নয়)', money(d.ownerOut)]);
   }
   return r;

@@ -432,7 +432,7 @@ function queueAdd(entry, key) {
 function queueDrop(rid) { lsDel(LS_Q + rid); delete S.opened[rid]; S.pending = S.pending.filter(function (q) { return q.rid !== rid; }); }
 function queueMark(p) { if (!p.mem) lsSet(LS_Q + p.rid, p); }
 function myPending() { return S.pending.filter(function (p) { return S.user && p.user === S.user.id; }); }
-function noteSent(body, res) { S.sent.push({ label: body ? body.label : '', txn: res.txn, memo: res.memo, chalan: res.chalan, date: res.date }); if (S.sent.length > 20) S.sent.shift(); }
+function noteSent(body, res) { S.saves = (S.saves || 0) + 1; S.sent.push({ label: body ? body.label : '', txn: res.txn, memo: res.memo, chalan: res.chalan, date: res.date }); if (S.sent.length > 20) S.sent.shift(); }
 var flushing = false;
 function flushPending() {
   if (flushing || !S.token || !S.user) return Promise.resolve();
@@ -513,7 +513,7 @@ function submit(kind, data, label, onSaved, opts) {
     stored = ok === true;
     return saveRetry(req, 2);
   }).then(function (res) {
-    delete S.inflight[rid]; queueDrop(rid); wait(false); S.parties = null; onSaved(res);
+    delete S.inflight[rid]; queueDrop(rid); wait(false); S.parties = null; S.saves = (S.saves || 0) + 1; onSaved(res);
   }, function (e) {
     delete S.inflight[rid]; wait(false);
     if (DEFINITE.has(e.code)) { queueDrop(rid); alertBox(errText(e), e.code === 'MISMATCH' ? 'bad' : 'warn'); return; }
@@ -531,7 +531,7 @@ function unsureBox(req, label, onSaved, e) {
     add(s, el('div', 'msg warn', errText(e) + ' ' + label + ': খাতায় উঠেছে কি না নিশ্চিত নয়। নতুন করে লিখবেন না; নিচের বোতাম চাপুন, একই এন্ট্রি আবার যাবে, দুইবার উঠবে না।'),
       btn('btn go', '🔄 একই এন্ট্রি আবার পাঠান', function () {
         closeModal(); wait(true, 'পাঠানো হচ্ছে…');
-        timed(authed(req)).then(function (res) { wait(false); onSaved(res); }, function (e2) { wait(false); if (DEFINITE.has(e2.code)) alertBox(errText(e2), 'warn'); else if (e2.code !== 'AUTH' && e2.code !== 'DEVICE' && e2.code !== 'OLD_PAGE') unsureBox(req, label, onSaved, e2); });
+        timed(authed(req)).then(function (res) { wait(false); S.saves = (S.saves || 0) + 1; onSaved(res); }, function (e2) { wait(false); if (DEFINITE.has(e2.code)) alertBox(errText(e2), 'warn'); else if (e2.code !== 'AUTH' && e2.code !== 'DEVICE' && e2.code !== 'OLD_PAGE') unsureBox(req, label, onSaved, e2); });
       }), btn('btn ghost', 'পরে', closeModal));
   });
 }
@@ -673,7 +673,7 @@ function chooseBranch(first) {
   var list = S.meta.branches.map(function (b) { return { label: b.name, sub: b.code, value: b.code, ic: KIND_IC[b.kind] || '🏬' }; });
   if (seesAll()) list.unshift({ label: 'সব শাখা একসাথে', sub: 'পুরো ব্যবসার হিসাব (এন্ট্রি দিতে শাখা বাছুন)', value: '*', ic: '🏢' });
   return pickTile(first ? 'কোন শাখা দেখবেন / কাজ করবেন?' : 'শাখা বদলান', list, { rows: true }).then(function (v) {
-    if (v === null || v === undefined) return;
+    if (v === null || v === undefined) { if (first) home(); return; }   // closed without choosing: the last branch used
     S.branch = v === '*' ? '' : v; S.dashBranch = S.branch; S.reportBranch = S.branch;
     lsSet(LS_BRANCH + S.user.id, v);
     home();
@@ -753,8 +753,9 @@ function afterLogin() {
     S.branch = codes.indexOf(saved) >= 0 ? saved : (saved === '*' && seesAll() ? '' : (codes[0] || null));
     S.dashBranch = S.branch || ''; S.reportBranch = S.dashBranch;
     document.body.classList.toggle('wide', window.innerWidth >= 900 && S.user.role !== 'staff');
-    home(); flushPending();
-    if (codes.length > 1) chooseBranch(true);              // every time the book opens, the person says where they are working
+    flushPending();
+    if (codes.length > 1) { stack = [function () { frame('আল আমিন ট্রেডার্স'); }]; draw(); chooseBranch(true); }   // every time the book opens, the person says where they are working (the home figures are asked for once, after that)
+    else home();
   }, function (e) { wait(false); if (e.code !== 'AUTH' && e.code !== 'DEVICE') { home(); toast(errText(e)); } });
 }
 function logout() { lockNow(null, true); }
@@ -1151,10 +1152,20 @@ function screenHome() {
 }
 
 /** The owner's view at the fingertips: today, this month, where the money is, what needs a look. */
+/* The home figures are shown at once from the last answer (under 2 minutes old, same branch, no save since), then
+   brought up to date when the book answers; so coming back to home does not wait for the book. */
+var DASH = { at: 0, branch: null, data: null };
 function loadDashboard(box) {
-  add(box, el('div', 'mut sm', 'হিসাব আসছে…'));
-  var branch = S.branch || '';
+  var branch = S.branch || '', fresh = DASH.data && DASH.branch === branch && Date.now() - DASH.at < 120000 && S.saves === DASH.saves;
+  if (fresh) paintDashboard(box, DASH.data, branch); else add(box, el('div', 'mut sm', 'হিসাব আসছে…'));
   readRetry({ fn: 'today', branch: branch }, 2).then(function (d) {
+    DASH = { at: Date.now(), branch: branch, data: d, saves: S.saves };
+    if (!box.isConnected) return;
+    paintDashboard(box, d, branch);
+  }, function (e) { if (!fresh && box.isConnected) { clear(box); add(box, el('div', 'msg bad', errText(e))); } });
+}
+function paintDashboard(box, d, branch) {
+  {
     clear(box);
     if (d.broken) add(box, el('div', 'msg bad', '⚠️ ' + ERR.BOOK_BROKEN));
     if (isReader() && S.meta.branches.length > 1) {
@@ -1206,7 +1217,7 @@ function loadDashboard(box) {
         add(r, ic, add(el('div', 'mid'), el('div', 't1', a[1]))); add(box, r);
       });
     }
-  }, function (e) { clear(box); if (e.code !== 'AUTH') add(box, el('div', 'msg warn', errText(e))); });
+  }
 }
 function sumOf(list) { return round2((list || []).reduce(function (a, x) { return a + x.amount; }, 0)); }
 

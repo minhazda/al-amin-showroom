@@ -1240,7 +1240,7 @@ function showSaved(title, res, lines) {
     add(body, c);
     if (res.warnRates && res.warnRates.length) add(body, el('div', 'msg warn', 'দাম রেট বোর্ডের চেয়ে কম: ' + res.warnRates.map(function (w) { return itemName(w.ref) + ' ' + money(w.rate) + ' (বোর্ড ' + money(w.board) + ')'; }).join(', ') + '। মালিক দেখবেন।'));
     if (res.overCredit) add(body, el('div', 'msg warn', 'বাকির সীমা ' + tk(res.overCredit.limit) + ' পার হয়েছে: এখন বাকি ' + tk(res.overCredit.after) + '।'));
-    if (res.unknownCostQty) add(body, el('div', 'msg info', 'এই মালের কেনা দাম খাতায় নেই, তাই লাভ হিসাবে এর খরচ ধরা হয়নি। কেনা দাম দিলে ঠিক হবে।'));
+    if (res.unknownCostQty) add(body, el('div', 'msg info', 'এই মালের কেনা দাম খাতায় নেই, তাই এই বিক্রি এখনো লাভে ধরা হয়নি। “কেনা দাম দিন”-এ দাম দিলে সেদিন থেকে লাভে ধরা হবে।'));
     var g = el('div', 'grid');
     var openDoc = function (v) { return function () { F = F || {}; F.docTxn = res.txn; F.docView = v; push(function () { screenDoc(res.txn); }); }; };
     if (res.chalan) add(g, btn('btn', '🧾 ক্যাশ মেমো', openDoc('memo')), btn('btn', '🚚 চালান', openDoc('chalan')));

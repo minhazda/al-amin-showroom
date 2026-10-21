@@ -192,8 +192,22 @@ var S = { meta: null, boot: null, dev: null, token: null, user: null, queueKey: 
 var LS_DEVICE = 'aat_central_device_v1', LS_Q = 'aat_central_q1_', LS_ITEMS = 'aat_central_items_v1', LS_PHOTO = 'aat_central_photo_', LS_BRANCH = 'aat_central_branch_';
 var app = document.getElementById('app');
 var lastTouch = Date.now();
-var IDLE_MS = 10 * 60 * 1000;
-var IDLE_NOTE = 'অনেকক্ষণ কিছু চাপা হয়নি। আবার পিন দিন।';
+/* One PIN lasts the working day (owner's wish, 21 Oct): the login is kept on this phone and asked again only after
+   5 hours without use, or when the book's own limit for a login (12 hours) is reached. "বের হন" ends it at once. */
+var IDLE_MS = 5 * 60 * 60 * 1000;
+var IDLE_NOTE = '৫ ঘণ্টা কিছু চাপা হয়নি। আবার পিন দিন।';
+var LS_SESS = 'aat_central_session_v1';
+function saveSession() { if (S.token && S.user) lsSet(LS_SESS, { token: S.token, user: S.user, queueKey: S.queueKey, exp: S.exp || 0, touch: lastTouch, dev: S.dev }); }
+function dropSession() { lsDel(LS_SESS); }
+/** The login kept on this phone, when it is still good: same phone, not past the book's limit, used within 5 hours. */
+function restoreSession() {
+  var s = lsGet(LS_SESS);
+  if (!s || typeof s !== 'object' || typeof s.token !== 'string' || !s.user || s.dev !== S.dev) { dropSession(); return false; }
+  var now = Date.now();
+  if ((s.exp && s.exp <= now + 60000) || !(s.touch > 0) || now - s.touch > IDLE_MS) { dropSession(); return false; }
+  S.token = s.token; S.user = s.user; S.queueKey = s.queueKey; S.exp = s.exp; lastTouch = s.touch;
+  return true;
+}
 // Answers after which nothing was written and the person must change something. Every other failure
 // leaves it unknown whether the book saved the entry, so the entry is kept and sent again with the same request id.
 /* A refusal is "definite" (nothing was saved, sending again will not help) unless it is one of these.
@@ -361,6 +375,7 @@ function timed(promise, ms) {
 function isIdle() { return !!S.token && Date.now() - lastTouch > IDLE_MS; }
 function lockNow(note, endOnServer) {
   if (endOnServer && S.token) { try { api({ fn: 'logout', token: S.token }).catch(function () { }); } catch (e) { } }
+  dropSession();
   closeModal(); wait(false); S.token = null; S.user = null; S.queueKey = null; S.meta = null; S.parties = null; S.sent = []; S.opened = {}; F = null; showLogin(note);
 }
 function authed(req) {
@@ -730,7 +745,7 @@ function pinPad(u) {
       wait(true, 'খুলছে…');
       itemsDigest().then(function (have) { return api({ fn: 'login', user: u.id, pin: pin, have: have }); }).then(function (r) {
         wait(false); closeModal();
-        S.token = r.token; S.user = r.user; S.queueKey = r.queueKey; lastTouch = Date.now();
+        S.token = r.token; S.user = r.user; S.queueKey = r.queueKey; S.exp = r.exp || 0; lastTouch = Date.now(); saveSession();
         afterLogin(r.meta || null, r.items || null);
       }, function (e) {
         wait(false); pin = ''; paint();
@@ -2748,7 +2763,8 @@ function screenHealth() {
 /* ---------- start ---------- */
 function onTouch(ev) {
   if (isIdle()) { lockNow(IDLE_NOTE, true); if (ev && ev.type === 'click') { ev.stopPropagation(); ev.preventDefault(); } return; }
-  lastTouch = Date.now();
+  var was = lastTouch; lastTouch = Date.now();
+  if (S.token && lastTouch - was > 60000) saveSession();   // the kept login remembers the last use (at most once a minute)
 }
 document.addEventListener('touchstart', onTouch, { capture: true, passive: true });
 document.addEventListener('click', onTouch, true);
@@ -2762,12 +2778,12 @@ function showReload() {
   draw();
 }
 function boot() {
-  api({ fn: 'boot' }).then(function (b) { S.boot = b; if (b.version !== PAGE_VERSION) { showReload(); return; } if (!S.token) showLogin(); }, function (e) {
+  api({ fn: 'boot' }).then(function (b) { S.boot = b; if (b.version !== PAGE_VERSION) { showReload(); return; } if (!S.token) showLogin(); else afterLogin(); }, function (e) {
     if (e.code === 'DEVICE') { showEnroll(); return; }
     stack = [function () { var body = frame('আল আমিন ট্রেডার্স', { noUser: true }); add(body, el('div', 'msg bad', errText(e)), btn('btn', '🔄 আবার চেষ্টা', function () { showLogin(); boot(); })); }]; draw();
   });
 }
-if (typeof S.dev === 'string' && S.dev) { showLogin(); boot(); } else showEnroll();
+if (typeof S.dev === 'string' && S.dev) { if (!restoreSession()) showLogin(); else { stack = [function () { frame('আল আমিন ট্রেডার্স', { noUser: true }); }]; draw(); } boot(); } else showEnroll();
 })();
 </script>
 </body>

@@ -599,7 +599,10 @@ function askNumber(opts) {
       });
       var g = el('div', 'grid'); g.style.marginTop = '10px';
       add(g, btn('btn ghost', 'বাতিল', function () { closeModal(); res(null); }),
-        btn('btn go', 'ঠিক আছে', function () { closeModal(); res(asText ? cur : (cur === '' ? 0 : Number(cur))); }));
+        btn('btn go', 'ঠিক আছে', function () {
+          if (opts.need && !asText && !(Number(cur) > 0)) { hint.textContent = opts.need; hint.className = 'msg warn'; return; }   // 0 here would quietly drop what the person was entering
+          closeModal(); res(asText ? cur : (cur === '' ? 0 : Number(cur)));
+        }));
       add(s, el('div', 'sec', opts.title || ''), disp, hint, keys, g);
       paint();
     });
@@ -1287,7 +1290,7 @@ function askUnit(it) {
   return pickTile('কোন মাপে?', [{ label: 'টন (MT)', value: 'MT', ic: '⚖️' }, { label: 'কেজি', value: 'kg', ic: '⚖️' }]);
 }
 function askQty(it, per, value) {
-  return askNumber({ title: itemName(it.ref) + ' — কত ' + PER_BN[per] + '?', value: value, decimals: per === 'MT' ? 4 : per === 'kg' ? 3 : 0, money: false, unit: PER_BN[per] });
+  return askNumber({ title: itemName(it.ref) + ' — কত ' + PER_BN[per] + '?', value: value, decimals: per === 'MT' ? 4 : per === 'kg' ? 3 : 0, money: false, unit: PER_BN[per], need: 'পরিমাণ লিখুন (০ হবে না)। বাদ দিতে চাইলে বাতিল চাপুন।' });
 }
 function linesBox(lines, opts) {
   var box = el('div');
@@ -1408,7 +1411,7 @@ function addDeliveryLine() {
           line.qty = q;
           if (line.booking) return true;
           var def = boardFor(F.board, it, per, false) || (it.listPrice && per === 'pcs' ? it.listPrice : null);   // showroom goods: the company's list price until a rate is set
-          return askNumber({ title: 'প্রতি ১ ' + PER_BN[per] + '-এর দর (মোট দাম নয়)', value: def, decimals: 2, hint: boardFor(F.board, it, per, false) ? 'আজকের বোর্ড: ' + money(def) : def ? 'কোম্পানির লিস্ট দাম: ' + money(def) : 'বোর্ডে দাম নেই' }).then(function (r) { if (!r) return; line.rate = r; return true; });
+          return askNumber({ title: 'প্রতি ১ ' + PER_BN[per] + '-এর দর (মোট দাম নয়)', value: def, decimals: 2, need: 'দর লিখুন — ০ দিয়ে বিক্রি হয় না।', hint: boardFor(F.board, it, per, false) ? 'আজকের বোর্ড: ' + money(def) : def ? 'কোম্পানির লিস্ট দাম: ' + money(def) : 'বোর্ডে দাম নেই' }).then(function (r) { if (!r) return; line.rate = r; return true; });
         }).then(function (ok) {
           if (!ok) return;
           if (it.base === 'g' && it.perBundle) return askNumber({ title: 'কয় বান্ডিল? (না গুনলে ০)', decimals: 0, money: false }).then(function (b) { if (b) line.bundles = b; return askNumber({ title: 'খুচরা পিস? (না থাকলে ০)', decimals: 0, money: false }); }).then(function (pc) { if (pc) line.pcs = pc; return true; });
@@ -1921,7 +1924,8 @@ function startAdjust() {
   pickTile('বিশেষ এন্ট্রি (মালিক)', opts, { rows: true }).then(function (k) {
     if (k === 'writeOff') return pickParty({ types: ['customer', 'subdealer', 'company', 'other'], title: 'কার বাকি মাফ?' }).then(function (p) {
       if (!p) return;
-      askNumber({ title: 'কত টাকা মাফ? (বাকি ' + tk(p.bal || 0) + ')', decimals: 2 }).then(function (a) {
+      if (!((p.bal || 0) > 0)) { alertBox(p.name + '-এর কাছে মাফ করার মতো বাকি নেই' + ((p.bal || 0) < 0 ? ' (উল্টো তাঁর ' + tk(-p.bal) + ' জমা / অগ্রিম আছে)।' : '।'), 'warn'); return; }
+      askNumber({ title: 'কত টাকা মাফ? (বাকি ' + tk(p.bal) + ')', decimals: 2, max: p.bal, hint: 'সর্বোচ্চ ' + tk(p.bal), need: 'কত টাকা মাফ লিখুন।' }).then(function (a) {
         if (!a) return;
         askText({ title: 'কেন (লিখতেই হবে)', max: 160 }).then(function (note) { if (!note) return; var label = p.name + ' রাইট-অফ ' + tk(a); submit('writeOff', { branch: S.branch, party: p.id, site: '', amount: a, note: note }, label, done(label), { expect: { total: a } }); });
       });
@@ -1935,7 +1939,8 @@ function startAdjust() {
         if (dr.account === cr.account && (dr.party || '') === (cr.party || '')) { alertBox('দুই দিকে একই হিসাব হতে পারে না। আলাদা হিসাব বাছুন।', 'warn'); return; }
         askNumber({ title: 'কত টাকা?', decimals: 2 }).then(function (a) {
           if (!a) return;
-          askText({ title: 'কেন (লিখতেই হবে)', max: 160 }).then(function (note) { if (!note) return; var label = 'কাটাকাটি ' + tk(a); submit('setoff', { branch: S.branch, debit: dr, credit: cr, amount: a, note: note }, label, done(label), { expect: { total: a } }); });
+          askText({ title: 'কেন (লিখতেই হবে)', max: 160 }).then(function (note) { if (!note) return; var SIDE_BN = { Customer: 'কাস্টমার', Company: 'মিল/কোম্পানি', Owner: 'মালিক', LoanGiven: 'ধার দেওয়া', StaffAdvance: 'স্টাফ অগ্রিম', Loan: 'ব্যাংক ঋণ' }, nm = function (x) { return (x.name || '') + ' (' + SIDE_BN[x.account] + ')'; };
+            var label = 'কাটাকাটি ' + tk(a) + ': ডেবিট ' + nm(dr) + ' ↔ ক্রেডিট ' + nm(cr); submit('setoff', { branch: S.branch, debit: dr, credit: cr, amount: a, note: note }, label, done(label), { expect: { total: a } }); });
         });
       });
     }
@@ -1977,7 +1982,8 @@ function screenJournal() {
   footer(btn('btn go', '💾 সেভ', function () {
     if (round2(dr) !== round2(cr) || !F.lines.length || !F.note) { alertBox(!F.note ? ERR.NEED_NOTE : ERR.NOT_BALANCED, 'warn'); return; }
     var d = { branch: S.branch, lines: F.lines.map(function (l) { var o = { account: l.account, debit: l.debit || 0, credit: l.credit || 0 }; if (l.party) o.party = l.party; return o; }), note: F.note };
-    submit('journal', d, 'জার্নাল ' + tk(dr), done('জার্নাল ' + tk(dr)), { expect: { total: round2(dr) } });
+    var jl = 'জার্নাল ' + tk(dr) + ': ' + d.lines.map(function (l) { var pn = l.party && S.partyById && S.partyById[l.party] ? S.partyById[l.party].name : (l.party || ''); return (l.debit ? 'ডেবিট ' : 'ক্রেডিট ') + l.account + (pn ? ' ' + pn : '') + ' ' + tk(l.debit || l.credit); }).join(' · ');
+    submit('journal', d, jl, done('জার্নাল ' + tk(dr)), { expect: { total: round2(dr) } });
   }));
 }
 
@@ -2265,7 +2271,7 @@ function screenDoc(txn) {
     if (can('flag') && !d.reversedBy) add(g, btn('btn ghost slim', '🚩 প্রশ্ন / ভুল জানান', function () { askText({ title: 'কী ভুল বা প্রশ্ন?', max: 200 }).then(function (n) { if (n) submit('flag', { txn: txn, note: n }, 'প্রশ্ন ' + txn, function () { toast('জানানো হয়েছে'); draw(); }, { noQueue: true }); }); }));
     if (can('answer') && d.queries.length && !d.answer) add(g, btn('btn ghost slim', '💬 উত্তর দিন', function () { askText({ title: 'উত্তর', max: 200 }).then(function (n) { if (n) submit('answer', { txn: txn, note: n }, 'উত্তর ' + txn, function () { toast('উত্তর দেওয়া হয়েছে'); draw(); }, { noQueue: true }); }); }));
     if (can('check') && !d.checked && d.by !== S.user.name) add(g, btn('btn go slim', '✔ যাচাই হলো', function () { submit('check', { txns: [txn] }, 'যাচাই ' + txn, function () { toast('যাচাই হলো'); draw(); }, { noQueue: true, expect: { count: 1 } }); }));
-    if (can('reverse') && !d.reversedBy && !d.reverses) add(g, btn('btn bad slim', '❌ এন্ট্রি বাতিল', function () { askText({ title: 'কেন বাতিল (লিখতেই হবে)', max: 160 }).then(function (n) { if (n) confirmBox('এন্ট্রি ' + txn + ' বাতিল হবে (উল্টো এন্ট্রি দিয়ে; আসলটা খাতায় থাকবে)। নিশ্চিত?', 'হ্যাঁ, বাতিল', 'bad').then(function (y) { if (y) submit('reverse', { txn: txn, note: n }, 'বাতিল ' + txn, function (r) { showSaved('বাতিল হয়েছে', r); }, { noQueue: true }); }); }); }));
+    if (can('reverse') && !d.reversedBy && !d.reverses && ['CASH_COUNT', 'PARTY', 'PARTY_EDIT', 'BOOK_REPAIR', 'LOCK', 'FLAG', 'ANSWER', 'CHECKED', 'REVIEWED', 'FOLLOWUP', 'PHOTO', 'RATE_NOTE'].indexOf(d.type) < 0) add(g, btn('btn bad slim', '❌ এন্ট্রি বাতিল', function () { askText({ title: 'কেন বাতিল (লিখতেই হবে)', max: 160 }).then(function (n) { if (n) confirmBox('এন্ট্রি ' + txn + ' বাতিল হবে (উল্টো এন্ট্রি দিয়ে; আসলটা খাতায় থাকবে)। নিশ্চিত?', 'হ্যাঁ, বাতিল', 'bad').then(function (y) { if (y) submit('reverse', { txn: txn, note: n }, 'বাতিল ' + txn, function (r) { showSaved('বাতিল হয়েছে', r); }, { noQueue: true }); }); }); }));
     if (d.booking && !d.booking.cancelled && can('delivery')) add(g, btn('btn slim', '🚚 এই বুকিং থেকে ডেলিভারি', function () { startDelivery(); F.party = { id: d.booking.party, name: d.booking.name }; loadPartyDetail(); }));
     if (d.booking && can('bookingCancel')) add(g, btn('btn ghost slim', '✂️ বুকিং-এর বাকি মাল বাতিল', function () { cancelBooking(d.booking); }));
     add(act, g);
@@ -2563,9 +2569,9 @@ function screenCheques() {
       add(card, add(el('div', 't1'), document.createTextNode(tk(c.amount) + ' · ' + c.name)), el('div', 't2', [c.bank, 'নং ' + c.chq, 'তারিখ ' + dmy(c.chqDate), CHQ_BN[c.status]].join(' · ')));
       if ((c.status === 'hand' || c.status === 'deposited') && can('chequeClear')) {
         var g = el('div', 'grid3');
-        if (c.status === 'hand') add(g, btn('btn ghost slim', '🏦 জমা', function () { if (!accountsOf('Bank', c.branch).length) { alertBox('এই শাখার কোনো ব্যাংক একাউন্ট খাতায় নেই। মালিক Accounts শিটে ব্যাংক যোগ করলে জমা দেওয়া যাবে।', 'warn'); return; } pickTile('কোন ব্যাংকে?', accountsOf('Bank', c.branch).map(function (a) { return { label: a.name, value: a.name, ic: '🏦' }; }), { rows: true }).then(function (acct) { if (acct) submit('chequeDeposit', { cheque: c.id, acct: acct }, 'চেক জমা', function () { draw(); }, { noQueue: true }); }); }));
-        add(g, btn('btn go slim', '✅ ক্লিয়ার', function () { var go = function (acct) { submit('chequeClear', acct ? { cheque: c.id, acct: acct } : { cheque: c.id }, 'চেক ক্লিয়ার', function () { draw(); }, { noQueue: true, expect: { total: c.amount } }); }; if (c.depositedTo) go(null); else if (!accountsOf('Bank', c.branch).length) alertBox('এই শাখার কোনো ব্যাংক একাউন্ট খাতায় নেই। মালিক Accounts শিটে ব্যাংক যোগ করলে ক্লিয়ার করা যাবে।', 'warn'); else pickTile('কোন ব্যাংকে টাকা এল?', accountsOf('Bank', c.branch).map(function (a) { return { label: a.name, value: a.name, ic: '🏦' }; }), { rows: true }).then(function (a) { if (a) go(a); }); }),
-          btn('btn bad slim', '⛔ ফেরত', function () { askText({ title: 'কেন ফেরত এল', max: 160 }).then(function (n) { if (!n) return; askNumber({ title: 'কাস্টমারের কাছ থেকে চেক ফেরতের চার্জ নেবেন? (না নিলে ০)', decimals: 2 }).then(function (fee) { if (fee === null) return; var d = { cheque: c.id, note: n }, ex = { total: c.amount }; if (fee) { d.fee = fee; ex.fee = fee; } submit('chequeBounce', d, 'চেক ফেরত', function () { draw(); }, { noQueue: true, expect: ex }); }); }); }));
+        if (c.status === 'hand') add(g, btn('btn ghost slim', '🏦 জমা', function () { if (!accountsOf('Bank', c.branch).length) { alertBox('এই শাখার কোনো ব্যাংক একাউন্ট খাতায় নেই। মালিক Accounts শিটে ব্যাংক যোগ করলে জমা দেওয়া যাবে।', 'warn'); return; } pickTile('কোন ব্যাংকে?', accountsOf('Bank', c.branch).map(function (a) { return { label: a.name, value: a.name, ic: '🏦' }; }), { rows: true }).then(function (acct) { if (acct) submit('chequeDeposit', { cheque: c.id, acct: acct }, 'চেক জমা: ' + tk(c.amount) + ' · ' + c.name + ' · ' + c.bank + ' নং ' + c.chq + ' → ' + acct, function () { draw(); }, { noQueue: true }); }); }));
+        add(g, btn('btn go slim', '✅ ক্লিয়ার', function () { var go = function (acct) { submit('chequeClear', acct ? { cheque: c.id, acct: acct } : { cheque: c.id }, 'চেক ক্লিয়ার: ' + tk(c.amount) + ' · ' + c.name + ' · ' + c.bank + ' নং ' + c.chq + (acct ? ' → ' + acct : ''), function () { draw(); }, { noQueue: true, expect: { total: c.amount } }); }; if (c.depositedTo) go(null); else if (!accountsOf('Bank', c.branch).length) alertBox('এই শাখার কোনো ব্যাংক একাউন্ট খাতায় নেই। মালিক Accounts শিটে ব্যাংক যোগ করলে ক্লিয়ার করা যাবে।', 'warn'); else pickTile('কোন ব্যাংকে টাকা এল?', accountsOf('Bank', c.branch).map(function (a) { return { label: a.name, value: a.name, ic: '🏦' }; }), { rows: true }).then(function (a) { if (a) go(a); }); }),
+          btn('btn bad slim', '⛔ ফেরত', function () { askText({ title: 'কেন ফেরত এল', max: 160 }).then(function (n) { if (!n) return; askNumber({ title: 'কাস্টমারের কাছ থেকে চেক ফেরতের চার্জ নেবেন? (না নিলে ০)', decimals: 2 }).then(function (fee) { if (fee === null) return; var d = { cheque: c.id, note: n }, ex = { total: c.amount }; if (fee) { d.fee = fee; ex.fee = fee; } submit('chequeBounce', d, 'চেক ফেরত (বাউন্স): ' + tk(c.amount) + ' · ' + c.name + ' · ' + c.bank + ' নং ' + c.chq, function () { draw(); }, { noQueue: true, expect: ex }); }); }); }));
         add(card, g);
       }
       add(box, card);
@@ -2730,11 +2736,12 @@ function screenHealth() {
   var body = frame('খাতার অবস্থা');
   var box = el('div'); add(body, box);
   fetchData({ fn: 'health' }).then(function (h) {
+    if (S.lastCheck && (!h.lastCheck || h.lastCheck.at < S.lastCheck.at)) h.lastCheck = S.lastCheck;   // the check just run here (the book's note of it can take a moment to show)
     var c = el('div', 'card');
-    add(c, add(el('div', 't1'), el('span', 'light ' + h.level), document.createTextNode(h.level === 'green' ? 'ঠিক আছে' : h.level === 'amber' ? 'বড় হচ্ছে' : 'ডাটাবেসে নেওয়ার সময়')), el('div', 't2', h.advice));
+    add(c, add(el('div', 't1'), el('span', 'light ' + h.level), document.createTextNode(h.level === 'green' ? 'ঠিক আছে' : h.level === 'amber' ? 'বড় হচ্ছে' : 'ডাটাবেসে নেওয়ার সময়')), el('div', 't2', h.level === 'green' ? 'খাতার আকার ঠিক আছে।' : h.level === 'amber' ? 'খাতা বড় বা ধীর হচ্ছে। কয়েক মাসের মধ্যে ডাটাবেসে নেওয়ার পরিকল্পনা করুন।' : 'খাতা Google Sheet-এর জন্য খুব বড় বা ধীর হয়ে গেছে: এখনই ডাটাবেসে নিন।'));
     add(c, kvRow('খাতার লাইন', String(h.rows)), kvRow('সবচেয়ে ধীর রিপোর্ট', (h.slowestMs / 1000).toFixed(1) + ' সেকেন্ড'), kvRow('শেষ পুরো যাচাই', h.lastCheck ? h.lastCheck.at + (h.lastCheck.ok ? ' ✔' : ' ⚠️ সমস্যা') : 'হয়নি'), kvRow('শেষ ব্যাকআপ', h.lastBackup ? h.lastBackup.at + ' (' + h.lastBackup.sizeKb + ' KB)' : 'হয়নি'), kvRow('সংস্করণ', h.version));
     add(box, c);
-    if (S.user.role === 'owner') add(box, btn('btn', '🔎 এখনই পুরো খাতা যাচাই', function () { fetchData({ fn: 'verify' }, 'পুরো খাতা যাচাই হচ্ছে…').then(function (v) { alertBox(v.ok ? 'খাতা ঠিক আছে: ' + v.rows + ' লাইন, ' + v.entries + ' এন্ট্রি। হিসাবে কোনো গরমিল নেই, সব এন্ট্রি ঠিক আছে।' : 'সমস্যা: ' + v.problems.join(' / '), v.ok ? 'ok' : 'bad').then(draw); }); }));
+    if (S.user.role === 'owner') add(box, btn('btn', '🔎 এখনই পুরো খাতা যাচাই', function () { fetchData({ fn: 'verify' }, 'পুরো খাতা যাচাই হচ্ছে…').then(function (v) { S.lastCheck = { at: v.at, ok: v.ok }; alertBox(v.ok ? 'খাতা ঠিক আছে: ' + v.rows + ' লাইন, ' + v.entries + ' এন্ট্রি। হিসাবে কোনো গরমিল নেই, সব এন্ট্রি ঠিক আছে।' : 'সমস্যা: ' + v.problems.join(' / '), v.ok ? 'ok' : 'bad').then(draw); }); }));
   });
 }
 

@@ -1014,7 +1014,7 @@ function pickItem(opts) {
         add(s, el('div', 'sec', state.brand + (state.group ? ' — ' + state.group : '') + (state.q ? ' — "' + state.q + '"' : '') + ' — ' + (state.cat === 'Steel' ? L('কোন সাইজ?') : L('কোনটা?'))));
         if (!shown.length) add(s, el('div', 'msg info', L('কিছু পাওয়া যায়নি।')));
         var g3 = el('div', 'grid3');
-        shown.slice(0, 80).forEach(function (it) { var t = btn('tile sm', null, function () { closeModal(); res(it); }); add(t, itemPic(it), el('div', null, state.cat === 'Steel' ? sizeOf(it) : (big ? it.size || it.product : it.product)), el('div', 'sub', it.listPrice ? L('লিস্ট ') + tk(it.listPrice) : (state.cat === 'Steel' && it.perBundle ? L('বান্ডিলে ') + it.perBundle + L(' পিস') : ''))); t.title = itemDesc(it); add(g3, t); });
+        shown.slice(0, 80).forEach(function (it) { var t = btn('tile sm', null, function () { closeModal(); res(it); }); add(t, itemPic(it), el('div', null, state.cat === 'Steel' ? sizeOf(it) : (big ? it.size || it.product : it.product)), state.cat !== 'Steel' && !big && it.size ? el('div', 'sub', it.size) : null, el('div', 'sub', it.listPrice ? L('লিস্ট ') + tk(it.listPrice) : (state.cat === 'Steel' && it.perBundle ? L('বান্ডিলে ') + it.perBundle + L(' পিস') : ''))); t.title = itemDesc(it); add(g3, t); });
         add(s, g3, btn('btn ghost', L('‹ পেছনে'), back));
         fetchPhotos(shown.slice(0, 80).map(function (it) { return it.ref; })).then(function (any) { if (any && modal.className === 'show') paint(); });
       });

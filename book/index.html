@@ -123,7 +123,7 @@
   .doc h1 { font-size:21px; margin:0; text-align:center; } .doc h2 { font-size:17px; margin:10px 0 6px; text-align:center; border-top:2px solid #000; border-bottom:2px solid #000; padding:4px 0; }
   .doc .c { text-align:center; font-size:13px; } .doc .p { font-size:13px; margin:6px 0; }
   .doc table { width:100%; border-collapse:collapse; margin:6px 0; } .doc td, .doc th { padding:4px 3px; border-bottom:1px solid #bbb; vertical-align:top; font-size:14px; } .doc th { border-bottom:2px solid #000; text-align:left; }
-  .doc table.wr td, .doc table.wr th { border:1px solid #000; padding:4px 6px; } .doc table.wr td { height:12mm; vertical-align:top; } .doc table.wr th.wcol { text-align:center; white-space:normal; } .doc table.wr .wcol { width:24%; } .doc table.wr tr { page-break-inside:avoid; break-inside:avoid; }
+  .doc table.wr td, .doc table.wr th { border:1px solid #000; padding:4px 6px; } .doc table.wr td { height:12mm; vertical-align:top; } .doc table.wr th.wcol { text-align:center; white-space:normal; } .doc table.wr .wcol { width:40%; } .doc table.wr tr { page-break-inside:avoid; break-inside:avoid; }
   .doc .r { text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums; } .doc .b { font-weight:800; }
   .doc .kv2 { display:flex; justify-content:space-between; gap:10px; font-size:14px; padding:2px 0; } .doc .kv2 span:last-child { text-align:right; font-weight:700; }
   .doc .sign { display:flex; justify-content:space-between; gap:20px; margin-top:44px; } .doc .sign div { flex:1; border-top:1px solid #000; text-align:center; font-size:13px; padding-top:4px; }
@@ -3573,8 +3573,8 @@ function time12(hm) { var h = Number(String(hm).substring(0, 2)), m = String(hm)
 /** A brand's stock (or the whole list) as a paper to print or a picture to share: counts, and for the owner or a manager the worth at the company's list price (owner 7 Nov); never buying prices. */
 /** A stock row's company list price per unit it is counted in (owner 7 Nov: a guide to the stock's worth), or null. */
 function lpOf(x) { var it = S.byRef[x.ref]; return it && it.listPrice > 0 && x.per === it.per ? it.listPrice : null; }
-/** owner 8 Nov: the stock paper is written on by pen through the month: what is sold, and what is left at the end. */
-var WRITE_COLS = [L('এ মাসে বিক্রি (কলমে লিখুন)'), L('মাস শেষে বাকি')];
+/** owner 8 Nov: the stock paper is written on by pen through the month: what is sold (only that column, owner 8 Nov). */
+var WRITE_COLS = [L('এ মাসে বিক্রি (কলমে লিখুন)')];
 /** A printed list's grand total (owner 8 Nov: no item's price on the paper, only the total): pieces, and for the owner or a manager its worth at the company list price. */
 function listSum(pcs, lv, totText) {
   var out = [[L('মোট পরিমাণ'), totText || (pcs + L(' পিস'))]];

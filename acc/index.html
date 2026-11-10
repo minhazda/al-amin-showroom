@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="bn">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<title>Bank account</title>
+<style>
+  :root { --bg:#f4f6f9; --card:#fff; --ink:#14202e; --mute:#5d6b7a; --line:#e2e7ee; --accent:#1a4a8c; --ok:#1b7a3a; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0f141a; --card:#18212b; --ink:#eef2f6; --mute:#9aa7b4; --line:#2a3542; --accent:#7fb0ff; --ok:#5fd08a; } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width:480px; margin:0 auto; padding:20px 16px 32px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:16px; padding:20px; }
+  .bank { font-size:22px; font-weight:700; color:var(--accent); margin:0 0 2px; }
+  .branch { color:var(--mute); margin:0 0 18px; }
+  .lbl { font-size:13px; color:var(--mute); margin:0 0 4px; }
+  .num { font-size:28px; font-weight:800; letter-spacing:.5px; word-break:break-all; margin:0 0 10px; font-variant-numeric:tabular-nums; }
+  .row { display:flex; justify-content:space-between; gap:12px; padding:12px 0; border-top:1px solid var(--line); }
+  .row b { text-align:right; word-break:break-word; }
+  button { font:inherit; font-weight:600; border:0; border-radius:12px; padding:14px; width:100%; cursor:pointer; }
+  .main { background:var(--accent); color:#fff; margin-bottom:16px; }
+  .alt { background:transparent; color:var(--accent); border:1px solid var(--line); margin-top:16px; }
+  .done { background:var(--ok) !important; color:#fff !important; }
+  .err { text-align:center; color:var(--mute); padding:40px 0; }
+  footer { text-align:center; color:var(--mute); font-size:13px; margin-top:16px; }
+</style>
+</head>
+<body>
+<main id="m"><p class="err">Loading…</p></main>
+<script>
+/* The account details live only in the QR code, after the "#" of the link: the part after "#" is never sent to any server
+   and nothing about any account is stored on this site. Format: #1|number|name|bank|branch|type|routing ("_" = space). */
+function render() {
+  var m = document.getElementById('m');
+  function el(t, c, x) { var e = document.createElement(t); if (c) e.className = c; if (x !== undefined) e.textContent = x; return e; }
+  var raw = '';
+  try { raw = decodeURIComponent(location.hash.slice(1)); } catch (e) { raw = ''; }
+  var f = raw.split('|').map(function (s) { return s.replace(/_/g, ' ').trim(); });
+  if (f[0] !== '1' || f.length !== 7 || !/^\d{6,20}$/.test(f[1])) { m.innerHTML = ''; m.appendChild(el('p', 'err', 'This link has no account details. Please scan the QR code again.')); return; }
+  var a = { no: f[1], name: f[2], bank: f[3], branch: f[4], type: f[5], routing: f[6] };
+  document.title = a.bank + ' — ' + a.name;
+  function copy(text, b, label) {
+    function ok() { b.textContent = '✓ Copied — কপি হয়েছে'; b.classList.add('done'); setTimeout(function () { b.textContent = label; b.classList.remove('done'); }, 2000); }
+    if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(text).then(ok, fallback); else fallback();
+    function fallback() { var t = el('textarea'); t.value = text; t.style.position = 'fixed'; t.style.opacity = '0'; document.body.appendChild(t); t.select(); try { document.execCommand('copy'); ok(); } catch (e) { } document.body.removeChild(t); }
+  }
+  m.innerHTML = '';
+  var c = el('div', 'card');
+  c.appendChild(el('p', 'bank', a.bank));
+  c.appendChild(el('p', 'branch', a.branch));
+  c.appendChild(el('p', 'lbl', 'Account number — অ্যাকাউন্ট নম্বর'));
+  c.appendChild(el('p', 'num', a.no));
+  var L1 = 'Copy account number — নম্বর কপি করুন', b1 = el('button', 'main', L1); b1.onclick = function () { copy(a.no, b1, L1); }; c.appendChild(b1);
+  [['Account name — অ্যাকাউন্টের নাম', a.name], ['Bank — ব্যাংক', a.bank], ['Branch — শাখা', a.branch], ['Account type — ধরন', a.type], ['Routing number — রাউটিং নম্বর', a.routing]].forEach(function (r) {
+    var row = el('div', 'row'); row.appendChild(el('span', 'lbl', r[0])); row.appendChild(el('b', null, r[1])); c.appendChild(row);
+  });
+  var all = 'Account name: ' + a.name + '\nAccount number: ' + a.no + '\nBank: ' + a.bank + '\nBranch: ' + a.branch + '\nAccount type: ' + a.type + '\nRouting number: ' + a.routing;
+  var L2 = 'Copy all details — সব তথ্য কপি করুন', b2 = el('button', 'alt', L2); b2.onclick = function () { copy(all, b2, L2); }; c.appendChild(b2);
+  m.appendChild(c);
+  m.appendChild(el('footer', null, 'Please check the name before you send money.'));
+}
+render();
+window.addEventListener('hashchange', render);   // another code scanned while this page is open: show that account, never the old one
+</script>
+</body>
+</html>

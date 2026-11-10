@@ -841,6 +841,8 @@ var stack = [];
 function show(render) { stack = [render]; draw(); }
 var DIRTY_KEYS = ['lines', 'pays', 'party', 'company', 'note', 'amount', 'doc', 'memo', 'got', 'gone', 'place', 'site'];
 function formSig(f) { return JSON.stringify(DIRTY_KEYS.map(function (k) { var v = f[k]; return v && typeof v === 'object' && !Array.isArray(v) && v.name !== undefined ? v.name : v === undefined ? null : v; })); }
+/** The places a branch sells from: its own, and those shared with it (owner 10 Nov: Branch 1 and the showroom share one stock). */
+function placesFor(b) { return S.meta.places.filter(function (p) { return p.branch === b || (p.shared || []).indexOf(b) >= 0; }); }
 function push(render) { if (F && F.kind && F._d === undefined) { F._d = stack.length + 1; F._s = formSig(F); } stack.push(render); draw(); }   // _d: the depth of a form's own screen
 /** Something typed or picked on a form since it opened, that leaving would throw away (owner 8 Nov). */
 function formDirty(f) { return !!(f && f.kind && f._s !== undefined && formSig(f) !== f._s); }
@@ -1846,7 +1848,7 @@ function screenDelivery() {
 }
 /** Where goods come from: one of this branch's places, or sent straight by the company / factory. */
 function pickSource(title, first) {
-  var places = S.meta.places.filter(function (p) { return p.branch === S.branch; });
+  var places = placesFor(S.branch);
   var opts = (first ? [{ label: first.label + L(' (আগের মতো)'), ic: '✅', value: 'same' }] : [])
     .concat(places.filter(function (p) { return !first || first.type !== 'place' || first.place !== p.code; }).map(function (p) { return { label: p.name, ic: '🏬', value: { type: 'place', place: p.code, label: p.name } }; }))
     .concat([{ label: L('কোম্পানি / ফ্যাক্টরি থেকে সরাসরি'), ic: '🏭', value: { type: 'mill' } }]);
@@ -1900,7 +1902,7 @@ function addDeliveryLine(start) {
           if (!ok) return;
           // a sale can take some goods from the shop, some from the warehouse and some straight from the company
           // only a branch with more than one store room asks for each line; the source of the whole chalan can be changed above
-          var placesHere = S.meta.places.filter(function (p) { return p.branch === S.branch; }).length;
+          var placesHere = placesFor(S.branch).length;
           return (placesHere > 1 ? pickSource(L('এই মাল কোথা থেকে যাচ্ছে?'), F.source) : Promise.resolve(F.source)).then(function (src) {
             if (!src) return;
             if (!sameSource(src, F.source)) line.source = src;
@@ -2004,7 +2006,7 @@ function startReceipt() { F = { kind: 'receipt', company: null, place: null, mil
 function screenReceipt() {
   var body = frame(L('মাল এলো'));
   add(body, field(L('কোন কোম্পানি / মিল'), F.company ? F.company.name : L('বাছুন'), function () { pickParty({ types: ['company'], title: L('কোন কোম্পানি?'), allowNew: S.user.role === 'owner' || S.user.role === 'manager', newType: 'company' }).then(function (c) { if (c) { F.company = c; F.mill = null; draw(); } }); }, !F.company));
-  var places = S.meta.places.filter(function (p) { return p.branch === S.branch; });
+  var places = placesFor(S.branch);
   add(body, field(L('কোথায় রাখা হলো'), F.place ? F.place.name : L('বাছুন'), function () { pickTile(L('মাল কোথায় রাখা হলো?'), places.map(function (p) { return { label: p.name, value: p, ic: '🏬' }; }), { rows: true }).then(function (p) { if (p) { F.place = p; draw(); } }); }, !F.place));
   if (S.user.role !== 'staff' && F.company) add(body, field(L('মিল বুকিং থেকে?'), F.mill ? F.mill.no : L('না'), function () {
     authed({ fn: 'millBookings', company: F.company.id }).then(function (r) {
@@ -2085,7 +2087,7 @@ function screenReturn() {
     });
   }, F.dl === null));
   if (F.dl === false) siteField(body);
-  var places = S.meta.places.filter(function (p) { return p.branch === S.branch; });
+  var places = placesFor(S.branch);
   add(body, field(L('কোথায় রাখা হলো'), F.place ? F.place.name : L('বাছুন'), function () { pickTile(L('মাল কোথায় রাখা হলো?'), places.map(function (p) { return { label: p.name, value: p, ic: '🏬' }; }), { rows: true }).then(function (p) { if (p) { F.place = p; draw(); } }); }, !F.place));
   add(body, el('div', 'sec', L('মাল')), linesBox(F.lines), btn('btn ghost', L('➕ মাল'), function () {
     if (F.dl === null) { alertBox(L('আগে চালান বাছুন।'), 'warn'); return; }
@@ -2571,7 +2573,9 @@ function startStockMove() {
   pickTile(L('মাল কোথা থেকে যাচ্ছে?'), here.map(function (p) { return { label: p.name, sub: p.branch, value: p, ic: '🏬' }; }), { rows: true }).then(function (from) {
     if (!from) return;
     // the same branch first; another branch is marked clearly (that branch must also sell the item, or the book refuses)
-    var dests = places.filter(function (p) { return p.code !== from.code; }).sort(function (a, b) { return (a.branch === from.branch ? 0 : 1) - (b.branch === from.branch ? 0 : 1); });
+    var mine = (S.meta.branches || []).map(function (b) { return b.code; });
+    // a place only shared with us is not ours to fill (review 10 Nov)
+    var dests = places.filter(function (p) { return p.code !== from.code && mine.indexOf(p.branch) >= 0; }).sort(function (a, b) { return (a.branch === from.branch ? 0 : 1) - (b.branch === from.branch ? 0 : 1); });
     pickTile(L('মাল কোথায় যাচ্ছে?'), dests.map(function (p) { var bo = branchOf(p.branch); return { label: p.name, sub: p.branch === from.branch ? p.branch : L('⚠️ অন্য শাখা: ') + (bo ? bo.name : p.branch), value: p, ic: '🏬' }; }), { rows: true }).then(function (to) {
       if (!to) return;
       pickItem({ noAny: true, inactiveToo: true }).then(function (it) {
